@@ -22,10 +22,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
-use crate::actions::Action;
+use crate::actions::{Action, FocusStep};
 use crate::keys::Hotkey;
 
 pub const DEFAULT_MODE: &str = "default";
@@ -85,6 +85,7 @@ enum RawAction {
         yabai: Option<String>,
         shell: Option<String>,
         mode: Option<String>,
+        focus: Option<String>,
     },
 }
 
@@ -92,12 +93,27 @@ impl RawAction {
     fn compile(self) -> Result<Action> {
         match self {
             RawAction::Yabai(s) => Action::yabai_from_str(&s),
-            RawAction::Table { yabai, shell, mode } => match (yabai, shell, mode) {
-                (Some(y), None, None) => Action::yabai_from_str(&y),
-                (None, Some(s), None) => Ok(Action::Shell(s)),
-                (None, None, Some(m)) => Ok(Action::Mode(m)),
-                (None, None, None) => bail!("action needs one of `yabai`, `shell` or `mode`"),
-                _ => bail!("action must set exactly one of `yabai`, `shell` or `mode`"),
+            RawAction::Table {
+                yabai,
+                shell,
+                mode,
+                focus,
+            } => match (yabai, shell, mode, focus) {
+                (Some(y), None, None, None) => Action::yabai_from_str(&y),
+                (None, Some(s), None, None) => Ok(Action::Shell(s)),
+                (None, None, Some(m), None) => Ok(Action::Mode(m)),
+                (None, None, None, Some(f)) => {
+                    FocusStep::from_name(&f).map(Action::Focus).ok_or_else(|| {
+                        anyhow!(
+                            "unknown focus step '{f}'; expected one of {}",
+                            FocusStep::NAMES.join(", ")
+                        )
+                    })
+                }
+                (None, None, None, None) => {
+                    bail!("action needs one of `yabai`, `shell`, `mode` or `focus`")
+                }
+                _ => bail!("action must set exactly one of `yabai`, `shell`, `mode` or `focus`"),
             },
         }
     }
@@ -252,6 +268,7 @@ mod tests {
             "alt - 1" = "space --focus 1"
             "alt + shift - return" = { shell = "open -a Ghostty" }
             "alt - r" = { mode = "resize" }
+            "alt - tab" = { focus = "previous-window" }
 
             [modes.resize]
             "h" = { yabai = "window --resize left:-20:0" }
@@ -270,10 +287,27 @@ mod tests {
             default[&"alt + shift - return".parse().unwrap()],
             Action::Shell("open -a Ghostty".into())
         );
+        assert_eq!(
+            default[&"alt - tab".parse().unwrap()],
+            Action::Focus(FocusStep::PreviousWindow)
+        );
         let resize = cfg.bindings("resize").unwrap();
         assert_eq!(
             resize[&"escape".parse().unwrap()],
             Action::Mode("default".into())
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_focus_step() {
+        let err = Config::parse(
+            r#"[bindings]
+"alt - a" = { focus = "sideways" }"#,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("unknown focus step 'sideways'"),
+            "{err:#}"
         );
     }
 

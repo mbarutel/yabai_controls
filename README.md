@@ -58,6 +58,17 @@ cleanly) is removed. On shutdown the rules are removed; labels stay (yabai has
 no way to clear one). Bindings can target the labels:
 `"alt - t" = "space --focus Ghostty"`.
 
+## Focus trail
+
+The daemon keeps a back/forward history of focused windows and of focused
+spaces, fed by yabai's `window_focused` and `space_changed` signals (so it
+needs signals, i.e. not `--no-signals`). Bind `{ focus = "previous-window" }`
+/ `"next-window"` / `"previous-space"` / `"next-space"` to walk it. Like a
+browser: stepping back and then focusing something else by hand discards the
+forward part. Spaces are tracked by id, so the trail survives index shifts
+when spaces are created or destroyed. The trail starts empty at launch (seeded
+with the current focus), holds 32 entries, and forgets closed windows.
+
 ## Layout
 
 ```
@@ -72,6 +83,7 @@ src/
   events.rs       Event enum + the daemon's own control socket
   os_signal.rs    SIGINT/SIGTERM → graceful shutdown (second one force-exits)
   actions.rs      Action enum + worker thread
+  focus.rs        back/forward focus trail (previous/next window and space)
   dispatch.rs     the event loop
 tests/protocol.rs wire-protocol round-trip against a fake daemon
 ```

@@ -14,7 +14,8 @@
 //! - [`keys`]: hotkey type, chord parsing, keycode table, CGEventTap
 //! - [`config`]: TOML config → validated bindings per mode
 //! - [`spaces`]: applies `[spaces]` assignments (create, label, app rules)
-//! - [`state`]: in-memory displays/spaces/windows snapshot
+//! - [`state`]: in-memory displays/spaces/windows snapshot + focus trails
+//! - [`focus`]: back/forward focus history used by `state`
 //! - [`events`]: the `Event` enum and the daemon's control socket
 //! - [`os_signal`]: SIGINT/SIGTERM → `Event::Shutdown`
 //! - [`actions`]: `Action` enum and the worker thread that runs them
@@ -24,6 +25,7 @@ pub mod actions;
 pub mod config;
 pub mod dispatch;
 pub mod events;
+pub mod focus;
 pub mod keys;
 pub mod os_signal;
 pub mod spaces;

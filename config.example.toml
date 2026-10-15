@@ -8,6 +8,9 @@
 #   "chord" = { yabai = "window --toggle float" }
 #   "chord" = { shell = "open -n -a Ghostty" }
 #   "chord" = { mode = "resize" }          # switch hotkey mode
+#   "chord" = { focus = "previous-window" }  # step along the focus trail:
+#                                          #   previous-window | next-window |
+#                                          #   previous-space | next-space
 
 [settings]
 # shell = "/bin/zsh"                       # used for `shell` actions; defaults to $SHELL
@@ -32,11 +35,17 @@
 "alt - l" = "window --focus east"
 
 # layout
-"alt - t" = "window --toggle float"
+"alt - w" = "window --toggle float"
 "alt - f" = "window --toggle zoom-fullscreen"
 "alt - s" = "space --layout stack"
 "alt - b" = "space --layout bsp"
 "alt - t" = "space --focus teams"
+
+# step back/forward through recently focused windows and spaces
+"alt - tab" = { focus = "previous-window" }
+"alt + shift - tab" = { focus = "next-window" }
+"alt - escape" = { focus = "previous-space" }
+"alt + shift - escape" = { focus = "next-space" }
 
 # apps
 "alt - return" = { shell = "open -n -a Ghostty" }

@@ -21,6 +21,37 @@ pub enum Action {
     /// Switch the active hotkey mode (handled by `dispatch`, never reaches
     /// the worker).
     Mode(String),
+    /// Step along the focus trail (resolved by `dispatch` against `State`
+    /// into a `Yabai` action; never reaches the worker).
+    Focus(FocusStep),
+}
+
+/// Where a `{ focus = "…" }` binding goes along the focus trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusStep {
+    PreviousWindow,
+    NextWindow,
+    PreviousSpace,
+    NextSpace,
+}
+
+impl FocusStep {
+    pub const NAMES: [&str; 4] = [
+        "previous-window",
+        "next-window",
+        "previous-space",
+        "next-space",
+    ];
+
+    pub fn from_name(name: &str) -> Option<FocusStep> {
+        match name {
+            "previous-window" => Some(FocusStep::PreviousWindow),
+            "next-window" => Some(FocusStep::NextWindow),
+            "previous-space" => Some(FocusStep::PreviousSpace),
+            "next-space" => Some(FocusStep::NextSpace),
+            _ => None,
+        }
+    }
 }
 
 impl Action {
@@ -97,6 +128,9 @@ fn run(action: &Action, client: &Client, shell: &str) -> Result<()> {
         }
         Action::Mode(name) => {
             bail!("mode switch to '{name}' reached the action worker; dispatch should handle it")
+        }
+        Action::Focus(step) => {
+            bail!("focus step {step:?} reached the action worker; dispatch should resolve it")
         }
     }
     Ok(())

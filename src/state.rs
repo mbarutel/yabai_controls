@@ -1,22 +1,45 @@
 //! In-memory snapshot of yabai's displays, spaces and windows.
 //!
 //! Owned by the dispatch loop. Refreshed in full on startup and on
-//! space/display events; patched per-window on window events.
+//! space/display events; patched per-window on window events. Also keeps
+//! the focus trail of windows and spaces (see [`FocusHistory`]) so bindings
+//! can step back to the previously focused one and forward again.
 
 use std::collections::HashMap;
 
 use anyhow::Result;
 use tracing::{debug, warn};
 
+use crate::focus::FocusHistory;
 use crate::yabai::Client;
-use crate::yabai::model::{Display, Space, Window, WindowId};
+use crate::yabai::model::{Display, Space, SpaceId, Window, WindowId};
 use crate::yabai::signal::SignalEvent;
 
-#[derive(Debug, Default, Clone)]
+/// How many focus changes to remember per trail.
+pub const FOCUS_HISTORY_CAPACITY: usize = 32;
+
+#[derive(Debug, Clone)]
 pub struct State {
     pub displays: Vec<Display>,
     pub spaces: Vec<Space>,
     pub windows: HashMap<WindowId, Window>,
+    /// Trail of focused windows, by id (`window --focus <id>` works).
+    pub window_focus: FocusHistory<WindowId>,
+    /// Trail of focused spaces, by id: indices shift when spaces are
+    /// created or destroyed, ids do not. Resolve to an index to focus.
+    pub space_focus: FocusHistory<SpaceId>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State {
+            displays: Vec::new(),
+            spaces: Vec::new(),
+            windows: HashMap::new(),
+            window_focus: FocusHistory::new(FOCUS_HISTORY_CAPACITY),
+            space_focus: FocusHistory::new(FOCUS_HISTORY_CAPACITY),
+        }
+    }
 }
 
 impl State {
@@ -26,10 +49,26 @@ impl State {
         Ok(state)
     }
 
+    /// Re-queries everything. The focus trails are pruned to what still
+    /// exists; an empty trail (startup, or everything closed) is seeded with
+    /// the current focus. Otherwise the trails are fed only by signals: a
+    /// snapshot taken between our own `back` and yabai's report of it would
+    /// still show the old focus and corrupt the trail.
     pub fn refresh_all(&mut self, client: &Client) -> Result<()> {
         self.displays = client.displays()?;
         self.spaces = client.spaces()?;
         self.windows = client.windows()?.into_iter().map(|w| (w.id, w)).collect();
+        self.prune_focus();
+        if self.space_focus.current().is_none()
+            && let Some(space) = self.focused_space()
+        {
+            self.space_focus.record(space.id);
+        }
+        if self.window_focus.current().is_none()
+            && let Some(window) = self.focused_window()
+        {
+            self.window_focus.record(window.id);
+        }
         debug!(
             displays = self.displays.len(),
             spaces = self.spaces.len(),
@@ -37,6 +76,15 @@ impl State {
             "state refreshed"
         );
         Ok(())
+    }
+
+    /// Drops closed windows and destroyed spaces from the focus trails.
+    pub fn prune_focus(&mut self) {
+        let windows = &self.windows;
+        self.window_focus.retain(|id| windows.contains_key(id));
+        let spaces = &self.spaces;
+        self.space_focus
+            .retain(|id| spaces.iter().any(|s| s.id == *id));
     }
 
     /// Updates the snapshot in response to a yabai signal. `args` are the
@@ -47,6 +95,7 @@ impl State {
             WindowDestroyed => {
                 if let Some(id) = parse_first(args) {
                     self.windows.remove(&id);
+                    self.window_focus.retain(|w| *w != id);
                 }
                 // Space window lists changed too; cheap enough to refetch.
                 self.spaces = client.spaces()?;
@@ -55,6 +104,9 @@ impl State {
             | WindowDeminimized | WindowTitleChanged => {
                 if let Some(id) = parse_first(args) {
                     self.refresh_window(client, id)?;
+                    if event == WindowFocused && self.windows.contains_key(&id) {
+                        self.window_focus.record(id);
+                    }
                 }
                 if matches!(
                     event,
@@ -63,8 +115,16 @@ impl State {
                     self.spaces = client.spaces()?;
                 }
             }
-            SpaceCreated | SpaceDestroyed | SpaceChanged | DisplayAdded | DisplayRemoved
-            | DisplayMoved | DisplayResized | DisplayChanged | SystemWoke | DockDidRestart => {
+            SpaceChanged => {
+                // Record from the signal, not the refreshed snapshot, so a
+                // focus we caused ourselves is matched against the exact id.
+                if let Some(id) = args.first().and_then(|a| a.parse::<SpaceId>().ok()) {
+                    self.space_focus.record(id);
+                }
+                self.refresh_all(client)?;
+            }
+            SpaceCreated | SpaceDestroyed | DisplayAdded | DisplayRemoved | DisplayMoved
+            | DisplayResized | DisplayChanged | SystemWoke | DockDidRestart => {
                 self.refresh_all(client)?;
             }
             _ => {}

@@ -10,13 +10,14 @@ use std::sync::mpsc::Receiver;
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
 
-use crate::actions::{Action, Executor};
+use crate::actions::{Action, Executor, FocusStep};
 use crate::config::{Config, DEFAULT_MODE};
 use crate::events::Event;
 use crate::keys::tap::GrabSet;
 use crate::spaces;
 use crate::state::State;
 use crate::yabai::Client;
+use crate::yabai::model::{SpaceId, WindowId};
 use crate::yabai::signal::SignalEvent;
 
 pub struct Dispatcher {
@@ -97,10 +98,42 @@ impl Dispatcher {
 
         match action {
             Action::Mode(target) => self.enter_mode(&target),
+            Action::Focus(step) => self.focus_step(step),
             other => {
                 debug!(%hotkey, ?other, "dispatching");
                 self.executor.submit(other);
             }
+        }
+    }
+
+    /// Resolves a focus-trail step against the current state into the
+    /// yabai command that performs it. The trail's cursor moves now; the
+    /// `window_focused` / `space_changed` report it causes is absorbed by
+    /// the history instead of being appended (see `focus::FocusHistory`).
+    fn focus_step(&mut self, step: FocusStep) {
+        use FocusStep::*;
+        // Windows can close without a signal reaching us in time.
+        self.state.prune_focus();
+        let window = |id: WindowId| vec!["window".to_string(), "--focus".into(), id.to_string()];
+        let space = |id: SpaceId| {
+            self.state
+                .spaces
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| vec!["space".to_string(), "--focus".into(), s.index.to_string()])
+        };
+        let args = match step {
+            PreviousWindow => self.state.window_focus.back().map(window),
+            NextWindow => self.state.window_focus.forward().map(window),
+            PreviousSpace => self.state.space_focus.back().and_then(space),
+            NextSpace => self.state.space_focus.forward().and_then(space),
+        };
+        match args {
+            Some(args) => {
+                debug!(?step, ?args, "focus step");
+                self.executor.submit(Action::Yabai(args));
+            }
+            None => debug!(?step, "nothing to focus in that direction"),
         }
     }
 
