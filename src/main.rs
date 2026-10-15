@@ -8,7 +8,6 @@ use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use yabai_controls::actions::Executor;
 use yabai_controls::config::Config;
 use yabai_controls::dispatch::{self, Dispatcher};
 use yabai_controls::events::{self, Event};
@@ -148,24 +147,27 @@ fn run_daemon(config_path: PathBuf, register_signals: bool) -> Result<()> {
     spaces::sync(&client, &config.spaces)?;
     let state = State::fetch(&client)?;
 
-    if register_signals {
+    let notify_bin = if register_signals {
         let exe = std::env::current_exe().context("locating own executable")?;
-        client.register_signals(SignalEvent::DEFAULT, &exe.to_string_lossy())?;
+        let exe = exe.to_string_lossy().into_owned();
+        client.register_signals(SignalEvent::DEFAULT, &exe)?;
         info!(
             count = SignalEvent::DEFAULT.len(),
             "yabai signals registered"
         );
-    }
+        Some(exe)
+    } else {
+        None
+    };
 
-    let executor = Executor::spawn(client.clone(), config.shell.clone());
     let dispatcher = Dispatcher::new(
         rx,
         config_path,
         config,
         grab.clone(),
         client.clone(),
-        executor,
         state,
+        notify_bin,
     );
 
     let dispatch_thread = {

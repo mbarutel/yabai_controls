@@ -5,22 +5,43 @@ key chords with a CGEventTap and sends commands straight to yabai's socket.
 
 ## Run
 
+Try it from a terminal first:
+
 ```sh
-cargo build --release
+cargo build
 mkdir -p ~/.config/yabai_controls
 cp config.example.toml ~/.config/yabai_controls/config.toml
-
-# optional but recommended: ad-hoc sign so the Accessibility grant survives rebuilds
-codesign -s - target/release/yabai_controls
-
 # stop skhd first if it binds the same chords
 skhd --stop-service
-
-RUST_LOG=info target/release/yabai_controls daemon
+RUST_LOG=info target/debug/yabai_controls daemon
 ```
 
 The first run needs the Accessibility permission: System Settings → Privacy &
-Security → Accessibility → add `target/release/yabai_controls`.
+Security → Accessibility → add the binary. macOS tracks an unsigned binary by
+path, so grant it to the path you will keep running from.
+
+### Install as a launch agent
+
+```sh
+cargo install --path .                       # ~/.cargo/bin/yabai_controls
+cp launchd/com.asmvik.yabai_controls.plist ~/Library/LaunchAgents/
+# grant Accessibility to ~/.cargo/bin/yabai_controls, then:
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asmvik.yabai_controls.plist
+```
+
+Logs go to `/tmp/yabai_controls_$USER.{out,err}.log`. `KeepAlive` restarts the
+daemon after a crash or when it exits because yabai was not up yet;
+`yabai_controls shutdown` keeps it down until the next login or
+`launchctl kickstart gui/$(id -u)/com.asmvik.yabai_controls`. After a rebuild:
+`cargo install --path . && yabai_controls shutdown && launchctl kickstart …`.
+
+yabai keeps the rules and signals this daemon installs only in memory, so a
+yabai restart silently drops them. Add this as the last line of `.yabairc`;
+`reload` re-registers the signals and re-syncs `[spaces]`:
+
+```sh
+yabai_controls reload 2>/dev/null || true
+```
 
 Other commands:
 

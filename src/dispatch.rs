@@ -29,6 +29,8 @@ pub struct Dispatcher {
     client: Client,
     executor: Executor,
     state: State,
+    /// Path yabai should run for `notify`; `None` when signals are disabled.
+    notify_bin: Option<String>,
 }
 
 impl Dispatcher {
@@ -38,9 +40,10 @@ impl Dispatcher {
         config: Config,
         grab: GrabSet,
         client: Client,
-        executor: Executor,
         state: State,
+        notify_bin: Option<String>,
     ) -> Dispatcher {
+        let executor = Executor::spawn(client.clone(), config.shell.clone());
         let mut d = Dispatcher {
             rx,
             config_path,
@@ -50,6 +53,7 @@ impl Dispatcher {
             client,
             executor,
             state,
+            notify_bin,
         };
         d.enter_mode(DEFAULT_MODE);
         d
@@ -149,7 +153,20 @@ impl Dispatcher {
         self.mode = name.to_string();
     }
 
+    /// Re-reads the config and re-establishes everything the daemon keeps
+    /// in yabai: `[spaces]` rules and the signal subscriptions. yabai holds
+    /// both only in memory, so `.yabairc` should end with
+    /// `yabai_controls reload` to heal after a yabai restart.
     fn reload(&mut self) {
+        if let Some(bin) = &self.notify_bin {
+            match self.client.register_signals(SignalEvent::DEFAULT, bin) {
+                Ok(()) => info!(
+                    count = SignalEvent::DEFAULT.len(),
+                    "yabai signals registered"
+                ),
+                Err(err) => error!(%err, "re-registering yabai signals failed"),
+            }
+        }
         match Config::load(&self.config_path) {
             Ok(config) => {
                 if let Err(err) = spaces::sync(&self.client, &config.spaces) {
