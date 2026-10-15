@@ -49,7 +49,10 @@ label, and adds a yabai rule `app="^<app>$" space=<index>` labelled
 `yabai_controls_space_<index>`, then applies it so already-open windows move.
 Creating spaces needs yabai's scripting addition (`sudo yabai --load-sa`);
 without it, assignments for missing spaces are skipped with a warning and the
-daemon still starts. Any `yabai_controls_space_*` rule in yabai that the
+daemon still starts. When a space later appears (yabai's `space_created`
+signal, so not with `--no-signals`), skipped assignments whose space now
+exists are labelled and their rule installed, moving the app's open windows;
+rules already installed are not re-applied. Any `yabai_controls_space_*` rule in yabai that the
 config no longer wants (including leftovers from a run that did not shut down
 cleanly) is removed. On shutdown the rules are removed; labels stay (yabai has
 no way to clear one). Bindings can target the labels:

@@ -17,6 +17,7 @@ use crate::keys::tap::GrabSet;
 use crate::spaces;
 use crate::state::State;
 use crate::yabai::Client;
+use crate::yabai::signal::SignalEvent;
 
 pub struct Dispatcher {
     rx: Receiver<Event>,
@@ -60,6 +61,14 @@ impl Dispatcher {
             match event {
                 Event::Hotkey(hotkey) => self.on_hotkey(hotkey),
                 Event::Yabai { event, args } => {
+                    // Before the state refresh so the snapshot sees the new
+                    // label and moved windows.
+                    if event == SignalEvent::SpaceCreated
+                        && let Err(err) =
+                            spaces::adopt_new_spaces(&self.client, &self.config.spaces)
+                    {
+                        warn!(%err, "adopting assignments for new space failed");
+                    }
                     if let Err(err) = self.state.apply(&self.client, event, &args) {
                         warn!(?event, %err, "failed to apply yabai event to state");
                     }

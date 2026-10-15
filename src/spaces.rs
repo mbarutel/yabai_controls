@@ -231,6 +231,43 @@ pub fn sync(client: &Client, new: &[SpaceAssignment]) -> Result<()> {
     Ok(())
 }
 
+/// Assignments that still need installing: every label-only one (the plan
+/// drops it again if the label already matches) and every app one whose rule
+/// is not among `installed_rules`. Rules already installed are deliberately
+/// left out so re-applying them cannot yank windows the user moved by hand.
+pub fn pending(
+    installed_rules: &[String],
+    assignments: &[SpaceAssignment],
+) -> Vec<SpaceAssignment> {
+    assignments
+        .iter()
+        .filter(|a| a.app.is_none() || !installed_rules.contains(&rule_label(a.index)))
+        .cloned()
+        .collect()
+}
+
+/// Reacts to yabai's `space_created` signal: labels and installs the rule
+/// for any assignment whose space now exists but was skipped earlier because
+/// it was missing, moving the app's open windows into it. Never creates
+/// spaces or removes rules; see [`sync`] for the full reconciliation.
+pub fn adopt_new_spaces(client: &Client, assignments: &[SpaceAssignment]) -> Result<()> {
+    let existing = client.spaces().context("querying spaces")?;
+    let pending = pending(&rule_labels(client)?, assignments);
+    let plan = plan(&existing, &[], &pending);
+    if plan.steps.is_empty() {
+        debug!(still_missing = ?plan.skipped, "space created; nothing to adopt");
+        return Ok(());
+    }
+    let failures = apply(client, &plan.steps);
+    info!(
+        steps = plan.steps.len(),
+        failures,
+        still_missing = ?plan.skipped,
+        "space created; assignments adopted"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +451,54 @@ mod tests {
         assert!(
             matches!(&plan.steps[0], Step::RemoveRule(_)),
             "removals come first"
+        );
+    }
+
+    #[test]
+    fn pending_keeps_label_only_and_uninstalled_app_assignments() {
+        let assignments = vec![
+            assign(1, Some("A"), "A", false),  // installed: leave alone
+            assign(2, None, "scratch", false), // label-only: always re-check
+            assign(5, Some("E"), "E", false),  // skipped earlier: adopt
+        ];
+        let installed = labels(&["yabai_controls_space_1"]);
+
+        let pending = pending(&installed, &assignments);
+
+        assert_eq!(
+            pending,
+            vec![assignments[1].clone(), assignments[2].clone()]
+        );
+    }
+
+    #[test]
+    fn adopting_a_new_space_adds_only_its_rule_and_removes_nothing() {
+        // Space 5 just appeared; rule 1 is installed and must not be re-applied.
+        let existing = vec![space(1, "A"), space(5, "")];
+        let assignments = vec![
+            assign(1, Some("A"), "A", false),
+            assign(5, Some("E"), "E", false),
+            assign(7, Some("G"), "G", false),
+        ];
+        let pending = pending(&labels(&["yabai_controls_space_1"]), &assignments);
+
+        let plan = plan(&existing, &[], &pending);
+
+        assert_eq!(plan.skipped, vec![7]);
+        assert_eq!(
+            plan.steps,
+            vec![
+                Step::Label {
+                    index: 5,
+                    label: "E".into()
+                },
+                Step::AddRule(AppSpaceRule {
+                    label: "yabai_controls_space_5".into(),
+                    app_regex: "^E$".into(),
+                    space: "5".into(),
+                    follow: false,
+                }),
+            ]
         );
     }
 
