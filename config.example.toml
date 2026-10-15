@@ -1,0 +1,52 @@
+# Copy to ~/.config/yabai_controls/config.toml
+#
+# Chord syntax: "mod + mod - key" or a bare "key" (see src/keys/keycodes.rs
+# for key names). Modifiers: cmd, alt, ctrl, shift, fn.
+#
+# Action forms:
+#   "chord" = "space --focus 1"            # string  -> yabai -m <args>
+#   "chord" = { yabai = "window --toggle float" }
+#   "chord" = { shell = "open -n -a Ghostty" }
+#   "chord" = { mode = "resize" }          # switch hotkey mode
+
+[settings]
+# shell = "/bin/zsh"                       # used for `shell` actions; defaults to $SHELL
+
+[bindings]
+# focus spaces
+"alt - 1" = "space --focus 1"
+"alt - 2" = "space --focus 2"
+"alt - 3" = "space --focus 3"
+"alt - 4" = "space --focus 4"
+"alt - 5" = "space --focus 5"
+
+# move the focused window to a space and follow it
+"alt + shift - 1" = "window --space 1 --focus"
+"alt + shift - 2" = "window --space 2 --focus"
+"alt + shift - 3" = "window --space 3 --focus"
+
+# focus windows
+"alt - h" = "window --focus west"
+"alt - j" = "window --focus south"
+"alt - k" = "window --focus north"
+"alt - l" = "window --focus east"
+
+# layout
+"alt - t" = "window --toggle float"
+"alt - f" = "window --toggle zoom-fullscreen"
+"alt - s" = "space --layout stack"
+"alt - b" = "space --layout bsp"
+
+# apps
+"alt - return" = { shell = "open -n -a Ghostty" }
+
+# enter resize mode
+"alt - r" = { mode = "resize" }
+
+[modes.resize]
+"h" = "window --resize left:-40:0"
+"j" = "window --resize bottom:0:40"
+"k" = "window --resize top:0:-40"
+"l" = "window --resize right:40:0"
+"escape" = { mode = "default" }
+"return" = { mode = "default" }
