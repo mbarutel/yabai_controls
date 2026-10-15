@@ -14,6 +14,7 @@ use crate::actions::{Action, Executor};
 use crate::config::{Config, DEFAULT_MODE};
 use crate::events::Event;
 use crate::keys::tap::GrabSet;
+use crate::spaces;
 use crate::state::State;
 use crate::yabai::Client;
 
@@ -68,6 +69,8 @@ impl Dispatcher {
             }
         }
         info!("dispatch loop stopped");
+
+        spaces::remove_all_rules(&self.client);
         self.executor
     }
 
@@ -107,6 +110,9 @@ impl Dispatcher {
     fn reload(&mut self) {
         match Config::load(&self.config_path) {
             Ok(config) => {
+                if let Err(err) = spaces::sync(&self.client, &config.spaces) {
+                    error!(%err, "space assignments failed; continuing with new bindings");
+                }
                 self.config = config;
                 info!(path = %self.config_path.display(), "config reloaded");
                 self.enter_mode(DEFAULT_MODE);

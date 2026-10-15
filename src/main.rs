@@ -13,6 +13,8 @@ use yabai_controls::config::Config;
 use yabai_controls::dispatch::{self, Dispatcher};
 use yabai_controls::events::{self, Event};
 use yabai_controls::keys::tap::{GrabSet, Shutdown, Tap};
+use yabai_controls::os_signal;
+use yabai_controls::spaces;
 use yabai_controls::state::State;
 use yabai_controls::yabai::Client;
 use yabai_controls::yabai::signal::SignalEvent;
@@ -120,7 +122,8 @@ fn run_daemon(config_path: PathBuf, register_signals: bool) -> Result<()> {
     info!(path = %config_path.display(), modes = config.modes.len(), "config loaded");
 
     let client = Client::from_env()?;
-    let state = State::fetch(&client)
+    client
+        .spaces()
         .with_context(|| format!("querying yabai at {}", client.socket_path().display()))?;
 
     let (tx, rx) = channel::<Event>();
@@ -128,7 +131,8 @@ fn run_daemon(config_path: PathBuf, register_signals: bool) -> Result<()> {
     let shutdown = Shutdown::new();
 
     // Install the tap first: it fails without Accessibility permission, and
-    // we want that to happen before we register signals or bind sockets.
+    // we want that to happen before anything with side effects (space
+    // rules, signals, sockets).
     let tap = {
         let tx = tx.clone();
         Tap::install(grab.clone(), move |hotkey| {
@@ -137,6 +141,12 @@ fn run_daemon(config_path: PathBuf, register_signals: bool) -> Result<()> {
     };
 
     let listener = events::listen(&events::control_socket_path()?, tx.clone())?;
+    os_signal::forward_termination(tx.clone())?;
+
+    // Apply [spaces] before the first snapshot so State sees the new labels.
+    // Only an unreachable yabai is fatal here; skipped spaces are logged.
+    spaces::sync(&client, &config.spaces)?;
+    let state = State::fetch(&client)?;
 
     if register_signals {
         let exe = std::env::current_exe().context("locating own executable")?;

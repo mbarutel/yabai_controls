@@ -12,9 +12,14 @@
 //! [modes.resize]              # extra modes, entered via { mode = "..." }
 //! "h" = "window --resize left:-20:0"
 //! "escape" = { mode = "default" }
+//!
+//! [spaces]                    # dedicate spaces to apps; label defaults to app
+//! 1 = { app = "Google Chrome" }
+//! 2 = { app = "Microsoft Teams", label = "teams", follow = true }
+//! 4 = { label = "scratch" }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -35,6 +40,35 @@ struct RawConfig {
     bindings: HashMap<String, RawAction>,
     #[serde(default)]
     modes: HashMap<String, HashMap<String, RawAction>>,
+    /// Keyed by space index as written in TOML (`1 = {...}` gives key "1").
+    #[serde(default)]
+    spaces: HashMap<String, RawSpace>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSpace {
+    app: Option<String>,
+    label: Option<String>,
+    #[serde(default)]
+    follow: bool,
+}
+
+/// A space dedicated to an app and/or given a label.
+///
+/// This is the config-level fact; everything yabai needs (the rule label,
+/// the anchored app regex, the space selector) is derived from it in
+/// `crate::spaces`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceAssignment {
+    /// 1-based mission-control index, as yabai reports it.
+    pub index: u32,
+    /// Label applied to the space. Defaults to `app`.
+    pub label: String,
+    /// Exact application name (`Window::app`) whose windows go to this space.
+    pub app: Option<String>,
+    /// When true, a new window of `app` also focuses the space.
+    pub follow: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,6 +109,8 @@ pub struct Config {
     pub shell: String,
     /// Mode name → (hotkey → action). Always contains `DEFAULT_MODE`.
     pub modes: HashMap<String, HashMap<Hotkey, Action>>,
+    /// Sorted by `index`; indices, apps and labels are each unique.
+    pub spaces: Vec<SpaceAssignment>,
 }
 
 impl Config {
@@ -126,12 +162,62 @@ impl Config {
             }
         }
 
-        Ok(Config { shell, modes })
+        let spaces = compile_spaces(raw.spaces)?;
+
+        Ok(Config {
+            shell,
+            modes,
+            spaces,
+        })
     }
 
     pub fn bindings(&self, mode: &str) -> Option<&HashMap<Hotkey, Action>> {
         self.modes.get(mode)
     }
+}
+
+fn compile_spaces(raw: HashMap<String, RawSpace>) -> Result<Vec<SpaceAssignment>> {
+    let mut spaces = Vec::with_capacity(raw.len());
+    let mut apps = HashSet::new();
+    let mut labels = HashSet::new();
+
+    for (key, space) in raw {
+        let index: u32 = key
+            .parse()
+            .ok()
+            .filter(|&i| i >= 1)
+            .with_context(|| format!("[spaces] key '{key}' must be a space index >= 1"))?;
+
+        let app = space
+            .app
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty());
+        let label = space
+            .label
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .or_else(|| app.clone())
+            .with_context(|| format!("[spaces.{index}] needs `app` or `label`"))?;
+
+        if let Some(app) = &app
+            && !apps.insert(app.clone())
+        {
+            bail!("[spaces.{index}] app '{app}' is already assigned to another space");
+        }
+        if !labels.insert(label.clone()) {
+            bail!("[spaces.{index}] label '{label}' is already used by another space");
+        }
+
+        spaces.push(SpaceAssignment {
+            index,
+            label,
+            app,
+            follow: space.follow,
+        });
+    }
+
+    spaces.sort_by_key(|s| s.index);
+    Ok(spaces)
 }
 
 fn compile_bindings(
@@ -228,5 +314,71 @@ mod tests {
     #[test]
     fn rejects_unknown_top_level_keys() {
         assert!(Config::parse("[bindngs]\n\"alt - a\" = \"x\"").is_err());
+    }
+
+    #[test]
+    fn parses_spaces_sorted_with_label_defaulting_to_app() {
+        let cfg = Config::parse(
+            r#"
+            [spaces]
+            3 = { app = "Ghostty", follow = true }
+            1 = { app = "Google Chrome" }
+            2 = { app = "Microsoft Teams", label = "teams" }
+            4 = { label = "scratch" }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.spaces,
+            vec![
+                SpaceAssignment {
+                    index: 1,
+                    label: "Google Chrome".into(),
+                    app: Some("Google Chrome".into()),
+                    follow: false
+                },
+                SpaceAssignment {
+                    index: 2,
+                    label: "teams".into(),
+                    app: Some("Microsoft Teams".into()),
+                    follow: false
+                },
+                SpaceAssignment {
+                    index: 3,
+                    label: "Ghostty".into(),
+                    app: Some("Ghostty".into()),
+                    follow: true
+                },
+                SpaceAssignment {
+                    index: 4,
+                    label: "scratch".into(),
+                    app: None,
+                    follow: false
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_space_entries() {
+        let cases = [
+            ("[spaces]\n0 = { app = \"A\" }", "index >= 1"),
+            ("[spaces]\nfoo = { app = \"A\" }", "index >= 1"),
+            ("[spaces]\n1 = { follow = true }", "needs `app` or `label`"),
+            (
+                "[spaces]\n1 = { app = \"A\" }\n2 = { app = \"A\" }",
+                "already assigned",
+            ),
+            (
+                "[spaces]\n1 = { app = \"A\" }\n2 = { label = \"A\" }",
+                "already used",
+            ),
+            ("[spaces]\n1 = { app = \"A\", space = 2 }", "unknown field"),
+        ];
+        for (text, expected) in cases {
+            let err = Config::parse(text).unwrap_err();
+            assert!(format!("{err:#}").contains(expected), "{text}: {err:#}");
+        }
     }
 }

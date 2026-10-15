@@ -13,7 +13,9 @@
 
 pub mod model;
 pub mod query;
+pub mod rule;
 pub mod signal;
+pub mod space;
 
 use std::io::{Read, Write};
 use std::net::Shutdown;

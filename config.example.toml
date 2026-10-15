@@ -36,6 +36,7 @@
 "alt - f" = "window --toggle zoom-fullscreen"
 "alt - s" = "space --layout stack"
 "alt - b" = "space --layout bsp"
+"alt - t" = "space --focus teams"
 
 # apps
 "alt - return" = { shell = "open -n -a Ghostty" }
@@ -50,3 +51,15 @@
 "l" = "window --resize right:40:0"
 "escape" = { mode = "default" }
 "return" = { mode = "default" }
+
+# Dedicate spaces to apps. Keyed by space index; missing spaces are created
+# when yabai's scripting addition is loaded, otherwise skipped with a warning.
+# `app` is the exact name yabai reports
+# (see `yabai_controls state`). `label` defaults to `app`. `follow = true`
+# focuses the space when a new window of the app appears. Labels persist in
+# yabai after the daemon exits; rules are removed.
+[spaces]
+1 = { app = "Google Chrome" }                        # label defaults to the app name
+2 = { app = "Microsoft Teams", label = "teams" }     # override the label
+3 = { app = "Ghostty", follow = true }               # focus the space when a window appears
+4 = { label = "scratch" }                            # label only, no dedicated app

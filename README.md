@@ -34,17 +34,40 @@ yabai_controls shutdown
 `yabai_controls notify …` is what yabai calls from the signals the daemon
 registers; you don't run it by hand.
 
+## Dedicating spaces to apps
+
+```toml
+[spaces]
+1 = { app = "Google Chrome" }                     # label defaults to the app name
+2 = { app = "Microsoft Teams", label = "teams" }
+3 = { app = "Ghostty", follow = true }            # focus the space on new windows
+4 = { label = "scratch" }                         # label only
+```
+
+On startup and `reload` the daemon creates any missing spaces, sets each
+label, and adds a yabai rule `app="^<app>$" space=<index>` labelled
+`yabai_controls_space_<index>`, then applies it so already-open windows move.
+Creating spaces needs yabai's scripting addition (`sudo yabai --load-sa`);
+without it, assignments for missing spaces are skipped with a warning and the
+daemon still starts. Any `yabai_controls_space_*` rule in yabai that the
+config no longer wants (including leftovers from a run that did not shut down
+cleanly) is removed. On shutdown the rules are removed; labels stay (yabai has
+no way to clear one). Bindings can target the labels:
+`"alt - t" = "space --focus Ghostty"`.
+
 ## Layout
 
 ```
 src/
   lib.rs          module map + thread diagram
   main.rs         CLI (daemon | notify | reload | shutdown | state | check-config)
-  config.rs       TOML -> validated bindings per mode
+  config.rs       TOML -> validated bindings per mode + space assignments
+  spaces.rs       plan/apply [spaces]: create, label, app rules
   keys/           Hotkey, chord parser, kVK keycode table, CGEventTap
   yabai/          socket client, serde models, typed queries, signal registration
   state.rs        in-memory displays/spaces/windows snapshot
   events.rs       Event enum + the daemon's own control socket
+  os_signal.rs    SIGINT/SIGTERM → graceful shutdown (second one force-exits)
   actions.rs      Action enum + worker thread
   dispatch.rs     the event loop
 tests/protocol.rs wire-protocol round-trip against a fake daemon
