@@ -2,44 +2,30 @@
 //!
 //! Owned by the dispatch loop. Refreshed in full on startup and on
 //! space/display events; patched per-window on window events. Also keeps
-//! the focus trail of windows and spaces (see [`FocusHistory`]) so bindings
-//! can step back to the previously focused one and forward again.
+//! the current and previous focused window and space (see [`LastFocus`]) so
+//! bindings can jump back to the previously focused one.
 
 use std::collections::HashMap;
 
 use anyhow::Result;
 use tracing::{debug, warn};
 
-use crate::focus::FocusHistory;
+use crate::focus::LastFocus;
 use crate::yabai::Client;
 use crate::yabai::model::{Display, Space, SpaceId, Window, WindowId};
 use crate::yabai::signal::SignalEvent;
 
-/// How many focus changes to remember per trail.
-pub const FOCUS_HISTORY_CAPACITY: usize = 32;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct State {
     pub displays: Vec<Display>,
     pub spaces: Vec<Space>,
     pub windows: HashMap<WindowId, Window>,
-    /// Trail of focused windows, by id (`window --focus <id>` works).
-    pub window_focus: FocusHistory<WindowId>,
-    /// Trail of focused spaces, by id: indices shift when spaces are
-    /// created or destroyed, ids do not. Resolve to an index to focus.
-    pub space_focus: FocusHistory<SpaceId>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State {
-            displays: Vec::new(),
-            spaces: Vec::new(),
-            windows: HashMap::new(),
-            window_focus: FocusHistory::new(FOCUS_HISTORY_CAPACITY),
-            space_focus: FocusHistory::new(FOCUS_HISTORY_CAPACITY),
-        }
-    }
+    /// Current and previous focused window, by id (`window --focus <id>`
+    /// works).
+    pub window_focus: LastFocus<WindowId>,
+    /// Current and previous focused space, by id: indices shift when spaces
+    /// are created or destroyed, ids do not. Resolve to an index to focus.
+    pub space_focus: LastFocus<SpaceId>,
 }
 
 impl State {
@@ -49,11 +35,11 @@ impl State {
         Ok(state)
     }
 
-    /// Re-queries everything. The focus trails are pruned to what still
-    /// exists; an empty trail (startup, or everything closed) is seeded with
-    /// the current focus. Otherwise the trails are fed only by signals: a
-    /// snapshot taken between our own `back` and yabai's report of it would
-    /// still show the old focus and corrupt the trail.
+    /// Re-queries everything. The focus memories are pruned to what still
+    /// exists; one without a current entry (startup, or everything closed)
+    /// is seeded with the current focus. Otherwise they are fed only by
+    /// signals: a snapshot taken between our own `back` and yabai's report
+    /// of it would still show the old focus and undo the swap.
     pub fn refresh_all(&mut self, client: &Client) -> Result<()> {
         self.displays = client.displays()?;
         self.spaces = client.spaces()?;
@@ -78,7 +64,7 @@ impl State {
         Ok(())
     }
 
-    /// Drops closed windows and destroyed spaces from the focus trails.
+    /// Drops closed windows and destroyed spaces from the focus memories.
     pub fn prune_focus(&mut self) {
         let windows = &self.windows;
         self.window_focus.retain(|id| windows.contains_key(id));

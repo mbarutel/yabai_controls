@@ -111,10 +111,11 @@ impl Dispatcher {
         }
     }
 
-    /// Resolves a focus-trail step against the current state into the
-    /// yabai command that performs it. The trail's cursor moves now; the
-    /// `window_focused` / `space_changed` report it causes is absorbed by
-    /// the history instead of being appended (see `focus::FocusHistory`).
+    /// Resolves a focus step against the current state into the yabai
+    /// command that performs it. For the previous-* steps the current and
+    /// previous slots swap now; the `window_focused` / `space_changed`
+    /// report it causes then matches the current slot and changes nothing
+    /// (see `focus::LastFocus`).
     fn focus_step(&mut self, step: FocusStep) {
         use FocusStep::*;
         // Windows can close without a signal reaching us in time.
@@ -129,9 +130,7 @@ impl Dispatcher {
         };
         let args = match step {
             PreviousWindow => self.state.window_focus.back().map(window),
-            NextWindow => self.state.window_focus.forward().map(window),
             PreviousSpace => self.state.space_focus.back().and_then(space),
-            NextSpace => self.state.space_focus.forward().and_then(space),
             Clockwise => self.around_space(Direction::Clockwise).map(window),
             CounterClockwise => self.around_space(Direction::CounterClockwise).map(window),
         };

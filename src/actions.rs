@@ -21,18 +21,19 @@ pub enum Action {
     /// Switch the active hotkey mode (handled by `dispatch`, never reaches
     /// the worker).
     Mode(String),
-    /// Step along the focus trail (resolved by `dispatch` against `State`
-    /// into a `Yabai` action; never reaches the worker).
+    /// Focus change computed by `dispatch` against `State` and turned into a
+    /// `Yabai` action; never reaches the worker.
     Focus(FocusStep),
 }
 
-/// Where a `{ focus = "…" }` binding goes along the focus trail.
+/// What a `{ focus = "…" }` binding focuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusStep {
+    /// The window focused before the current one (see `crate::focus`);
+    /// pressing twice toggles.
     PreviousWindow,
-    NextWindow,
+    /// The space focused before the current one; pressing twice toggles.
     PreviousSpace,
-    NextSpace,
     /// Next window around the focused space by screen position (see
     /// `crate::ring`); works in every layout.
     Clockwise,
@@ -40,11 +41,9 @@ pub enum FocusStep {
 }
 
 impl FocusStep {
-    pub const NAMES: [&str; 6] = [
+    pub const NAMES: [&str; 4] = [
         "previous-window",
-        "next-window",
         "previous-space",
-        "next-space",
         "clockwise",
         "counter-clockwise",
     ];
@@ -52,9 +51,7 @@ impl FocusStep {
     pub fn from_name(name: &str) -> Option<FocusStep> {
         match name {
             "previous-window" => Some(FocusStep::PreviousWindow),
-            "next-window" => Some(FocusStep::NextWindow),
             "previous-space" => Some(FocusStep::PreviousSpace),
-            "next-space" => Some(FocusStep::NextSpace),
             "clockwise" => Some(FocusStep::Clockwise),
             "counter-clockwise" => Some(FocusStep::CounterClockwise),
             _ => None,

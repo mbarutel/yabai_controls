@@ -14,8 +14,8 @@
 //! - [`keys`]: hotkey type, chord parsing, keycode table, CGEventTap
 //! - [`config`]: TOML config → validated bindings per mode
 //! - [`spaces`]: applies `[spaces]` assignments (create, label, app rules)
-//! - [`state`]: in-memory displays/spaces/windows snapshot + focus trails
-//! - [`focus`]: back/forward focus history used by `state`
+//! - [`state`]: in-memory displays/spaces/windows snapshot + last focus
+//! - [`focus`]: current/previous focus memory used by `state`
 //! - [`ring`]: clockwise window order for a space, any layout
 //! - [`events`]: the `Event` enum and the daemon's control socket
 //! - [`os_signal`]: SIGINT/SIGTERM → `Event::Shutdown`
