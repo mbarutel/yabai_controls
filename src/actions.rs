@@ -33,14 +33,20 @@ pub enum FocusStep {
     NextWindow,
     PreviousSpace,
     NextSpace,
+    /// Next window around the focused space by screen position (see
+    /// `crate::ring`); works in every layout.
+    Clockwise,
+    CounterClockwise,
 }
 
 impl FocusStep {
-    pub const NAMES: [&str; 4] = [
+    pub const NAMES: [&str; 6] = [
         "previous-window",
         "next-window",
         "previous-space",
         "next-space",
+        "clockwise",
+        "counter-clockwise",
     ];
 
     pub fn from_name(name: &str) -> Option<FocusStep> {
@@ -49,6 +55,8 @@ impl FocusStep {
             "next-window" => Some(FocusStep::NextWindow),
             "previous-space" => Some(FocusStep::PreviousSpace),
             "next-space" => Some(FocusStep::NextSpace),
+            "clockwise" => Some(FocusStep::Clockwise),
+            "counter-clockwise" => Some(FocusStep::CounterClockwise),
             _ => None,
         }
     }

@@ -17,8 +17,17 @@ RUST_LOG=info target/debug/yabai_controls daemon
 ```
 
 The first run needs the Accessibility permission: System Settings → Privacy &
-Security → Accessibility → add the binary. macOS tracks an unsigned binary by
-path, so grant it to the path you will keep running from.
+Security → Accessibility → add the binary. The Rust linker ad-hoc signs every
+build, and macOS ties the grant to that signature, so **every rebuild
+invalidates the grant**: remove the stale entry and add the binary again (or
+toggle it off and on). To make the grant survive rebuilds, create a
+self-signed code-signing certificate once (Keychain Access → Certificate
+Assistant → Create a Certificate, type "Code Signing", e.g. named
+`yabai_controls`) and sign each build with it before granting:
+
+```sh
+codesign -f -s yabai_controls ~/.cargo/bin/yabai_controls
+```
 
 ### Install as a launch agent
 
@@ -33,7 +42,11 @@ Logs go to `/tmp/yabai_controls_$USER.{out,err}.log`. `KeepAlive` restarts the
 daemon after a crash or when it exits because yabai was not up yet;
 `yabai_controls shutdown` keeps it down until the next login or
 `launchctl kickstart gui/$(id -u)/com.asmvik.yabai_controls`. After a rebuild:
-`cargo install --path . && yabai_controls shutdown && launchctl kickstart …`.
+`cargo install --path . && yabai_controls shutdown && launchctl kickstart …`,
+then re-grant Accessibility (or `codesign` first, see above). Until the grant
+is in place launchd keeps retrying the daemon every few seconds and the
+err log fills with `failed to create event tap`; it starts working as soon
+as the grant lands.
 
 yabai keeps the rules and signals this daemon installs only in memory, so a
 yabai restart silently drops them. Add this as the last line of `.yabairc`;
@@ -90,6 +103,18 @@ forward part. Spaces are tracked by id, so the trail survives index shifts
 when spaces are created or destroyed. The trail starts empty at launch (seeded
 with the current focus), holds 32 entries, and forgets closed windows.
 
+## Clockwise / counter-clockwise focus
+
+yabai's `window --focus east|west|…` selectors are geometric, so they do
+nothing useful in a stack (every window has the same frame). Bind
+`{ focus = "clockwise" }` / `"counter-clockwise"` to cycle every window on the
+focused space regardless of layout. The ring is computed fresh from yabai on
+each press: windows sharing a frame (a stack) form one slot, slots are ordered
+by their angle around the centroid of all slots (clockwise on screen), a stack
+is walked in place by stack index before moving on, floating windows are
+included, minimized/hidden windows and dialogs are skipped, and a window
+sitting on the centroid (e.g. the middle of a 3×3 grid) comes last.
+
 ## Layout
 
 ```
@@ -105,6 +130,7 @@ src/
   os_signal.rs    SIGINT/SIGTERM → graceful shutdown (second one force-exits)
   actions.rs      Action enum + worker thread
   focus.rs        back/forward focus trail (previous/next window and space)
+  ring.rs         clockwise ordering of a space's windows (any layout)
   dispatch.rs     the event loop
 tests/protocol.rs wire-protocol round-trip against a fake daemon
 ```

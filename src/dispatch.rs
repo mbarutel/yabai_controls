@@ -14,6 +14,7 @@ use crate::actions::{Action, Executor, FocusStep};
 use crate::config::{Config, DEFAULT_MODE};
 use crate::events::Event;
 use crate::keys::tap::GrabSet;
+use crate::ring::{self, Direction};
 use crate::spaces;
 use crate::state::State;
 use crate::yabai::Client;
@@ -131,6 +132,8 @@ impl Dispatcher {
             NextWindow => self.state.window_focus.forward().map(window),
             PreviousSpace => self.state.space_focus.back().and_then(space),
             NextSpace => self.state.space_focus.forward().and_then(space),
+            Clockwise => self.around_space(Direction::Clockwise).map(window),
+            CounterClockwise => self.around_space(Direction::CounterClockwise).map(window),
         };
         match args {
             Some(args) => {
@@ -139,6 +142,21 @@ impl Dispatcher {
             }
             None => debug!(?step, "nothing to focus in that direction"),
         }
+    }
+
+    /// Neighbour of the focused window around the focused space. Queries
+    /// yabai rather than the snapshot so a drag or resize that has not yet
+    /// been signalled cannot send focus the wrong way.
+    fn around_space(&self, direction: Direction) -> Option<WindowId> {
+        let windows = match self.client.windows_on_focused_space() {
+            Ok(w) => w,
+            Err(err) => {
+                warn!(%err, "querying focused space windows");
+                return None;
+            }
+        };
+        let current = windows.iter().find(|w| w.has_focus).map(|w| w.id);
+        ring::neighbour(&ring::ring(&windows), current, direction)
     }
 
     fn enter_mode(&mut self, name: &str) {

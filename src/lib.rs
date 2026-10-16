@@ -16,6 +16,7 @@
 //! - [`spaces`]: applies `[spaces]` assignments (create, label, app rules)
 //! - [`state`]: in-memory displays/spaces/windows snapshot + focus trails
 //! - [`focus`]: back/forward focus history used by `state`
+//! - [`ring`]: clockwise window order for a space, any layout
 //! - [`events`]: the `Event` enum and the daemon's control socket
 //! - [`os_signal`]: SIGINT/SIGTERM → `Event::Shutdown`
 //! - [`actions`]: `Action` enum and the worker thread that runs them
@@ -28,6 +29,7 @@ pub mod events;
 pub mod focus;
 pub mod keys;
 pub mod os_signal;
+pub mod ring;
 pub mod spaces;
 pub mod state;
 pub mod yabai;

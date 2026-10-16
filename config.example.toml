@@ -11,6 +11,8 @@
 #   "chord" = { focus = "previous-window" }  # step along the focus trail:
 #                                          #   previous-window | next-window |
 #                                          #   previous-space | next-space
+#   "chord" = { focus = "clockwise" }      # cycle windows on the focused space
+#                                          #   clockwise | counter-clockwise
 
 [settings]
 # shell = "/bin/zsh"                       # used for `shell` actions; defaults to $SHELL
@@ -46,6 +48,10 @@
 "alt + shift - tab" = { focus = "next-window" }
 "alt - escape" = { focus = "previous-space" }
 "alt + shift - escape" = { focus = "next-space" }
+
+# cycle through the windows on the focused space, works in any layout
+"alt - n" = { focus = "clockwise" }
+"alt - p" = { focus = "counter-clockwise" }
 
 # apps
 "alt - return" = { shell = "open -n -a Ghostty" }

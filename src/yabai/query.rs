@@ -35,6 +35,11 @@ impl Client {
         self.query(&["query", "--spaces", "--space", &id.to_string()])
     }
 
+    /// Windows on the focused space.
+    pub fn windows_on_focused_space(&self) -> Result<Vec<Window>> {
+        self.query(&["query", "--windows", "--space"])
+    }
+
     /// Windows on the given space index.
     pub fn windows_on_space(&self, space_index: u32) -> Result<Vec<Window>> {
         self.query(&["query", "--windows", "--space", &space_index.to_string()])
