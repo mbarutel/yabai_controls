@@ -30,8 +30,16 @@ impl Modifiers {
     const MASK: u64 = Self::SHIFT.0 | Self::CTRL.0 | Self::ALT.0 | Self::CMD.0 | Self::FN.0;
 
     /// Keeps only the modifier bits we care about from a raw event flag set.
-    pub fn from_flags(flags: CGEventFlags) -> Self {
-        Modifiers(flags.bits() & Self::MASK)
+    ///
+    /// macOS raises `SecondaryFn` by itself for arrows, the navigation cluster
+    /// and F-keys, so for those keys the bit says nothing about the physical fn
+    /// key and is dropped; `ctrl - right` then matches a plain ctrl+→.
+    pub fn from_flags(flags: CGEventFlags, keycode: u16) -> Self {
+        let mut bits = flags.bits() & Self::MASK;
+        if keycodes::has_implicit_fn(keycode) {
+            bits &= !Self::FN.0;
+        }
+        Modifiers(bits)
     }
 
     pub fn contains(self, other: Modifiers) -> bool {
@@ -185,6 +193,27 @@ mod tests {
     fn rejects_unknown_modifier_and_key() {
         assert!("hyper - a".parse::<Hotkey>().is_err());
         assert!("alt - nosuchkey".parse::<Hotkey>().is_err());
+    }
+
+    #[test]
+    fn implicit_fn_on_arrow_is_ignored_but_kept_on_letters() {
+        let ctrl_fn = CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagSecondaryFn
+            | CGEventFlags::CGEventFlagNumericPad;
+        let want: Hotkey = "ctrl - right".parse().unwrap();
+        assert_eq!(
+            Hotkey::new(Modifiers::from_flags(ctrl_fn, 0x7C), 0x7C),
+            want
+        );
+
+        let fn_h: Hotkey = "fn - h".parse().unwrap();
+        assert_eq!(
+            Hotkey::new(
+                Modifiers::from_flags(CGEventFlags::CGEventFlagSecondaryFn, 0x04),
+                0x04
+            ),
+            fn_h
+        );
     }
 
     #[test]

@@ -140,6 +140,19 @@ pub fn keycode_for_name(name: &str) -> Option<u16> {
         .map(|&(_, code)| code)
 }
 
+/// Keys for which macOS sets the `SecondaryFn` event flag on its own, whether
+/// or not the physical fn key is held: arrows, the navigation cluster (Home,
+/// End, Page Up/Down, forward delete, Help) and F1–F20.
+pub fn has_implicit_fn(code: u16) -> bool {
+    matches!(
+        code,
+        0x7B..=0x7E // arrows
+            | 0x72 | 0x73 | 0x74 | 0x75 | 0x77 | 0x79 // help, home, pageup, fwddelete, end, pagedown
+            | 0x7A | 0x78 | 0x63 | 0x76 | 0x60 | 0x61 | 0x62 | 0x64 | 0x65 | 0x6D // f1–f10
+            | 0x67 | 0x6F | 0x69 | 0x6B | 0x71 | 0x6A | 0x40 | 0x4F | 0x50 | 0x5A // f11–f20
+    )
+}
+
 pub fn name_for_keycode(code: u16) -> Option<&'static str> {
     TABLE
         .iter()

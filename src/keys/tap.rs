@@ -99,7 +99,7 @@ impl Tap {
                         let keycode = event
                             .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
                             as u16;
-                        let modifiers = Modifiers::from_flags(event.get_flags());
+                        let modifiers = Modifiers::from_flags(event.get_flags(), keycode);
                         let hotkey = Hotkey::new(modifiers, keycode);
 
                         if grab.contains(&hotkey) {
