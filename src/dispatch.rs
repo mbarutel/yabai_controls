@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
@@ -32,6 +33,7 @@ pub struct Dispatcher {
     state: State,
     /// Path yabai should run for `notify`; `None` when signals are disabled.
     notify_bin: Option<String>,
+    last_display_sync: Option<Instant>,
 }
 
 impl Dispatcher {
@@ -55,6 +57,7 @@ impl Dispatcher {
             executor,
             state,
             notify_bin,
+            last_display_sync: None,
         };
         d.enter_mode(DEFAULT_MODE);
         d
@@ -75,6 +78,22 @@ impl Dispatcher {
                     {
                         warn!(%err, "adopting assignments for new space failed");
                     }
+
+                    if matches!(
+                        event,
+                        SignalEvent::DisplayAdded
+                            | SignalEvent::DisplayRemoved
+                            | SignalEvent::SystemWoke
+                    ) && self
+                            .last_display_sync
+                            .is_none_or(|t| t.elapsed() > Duration::from_secs(2))
+                    {
+                        self.last_display_sync = Some(Instant::now());
+                        if let Err(err) = spaces::sync(&self.client, &self.config.spaces) {
+                            warn!(?event, %err, "re-syncing space assignments failed");
+                        }
+                    }
+
                     if let Err(err) = self.state.apply(&self.client, event, &args) {
                         warn!(?event, %err, "failed to apply yabai event to state");
                     }
