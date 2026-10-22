@@ -86,6 +86,9 @@ enum RawAction {
         shell: Option<String>,
         mode: Option<String>,
         focus: Option<String>,
+        app: Option<String>,
+        #[serde(default)]
+        launch: bool
     },
 }
 

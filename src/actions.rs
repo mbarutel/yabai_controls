@@ -1,41 +1,25 @@
-//! What a hotkey does, and the worker thread that does it.
-//!
-//! Actions run off the dispatch thread so a slow yabai call or a hung shell
-//! command never delays key handling.
-
 use std::process::Command;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use tracing::{debug, error, info};
 
 use crate::yabai::Client;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// Arguments to send to yabai, e.g. `["space", "--focus", "3"]`.
     Yabai(Vec<String>),
-    /// A command run via `$SHELL -c`.
     Shell(String),
-    /// Switch the active hotkey mode (handled by `dispatch`, never reaches
-    /// the worker).
     Mode(String),
-    /// Focus change computed by `dispatch` against `State` and turned into a
-    /// `Yabai` action; never reaches the worker.
     Focus(FocusStep),
+    App { name: String, launch: bool },
 }
 
-/// What a `{ focus = "…" }` binding focuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusStep {
-    /// The window focused before the current one (see `crate::focus`);
-    /// pressing twice toggles.
     PreviousWindow,
-    /// The space focused before the current one; pressing twice toggles.
     PreviousSpace,
-    /// Next window around the focused space by screen position (see
-    /// `crate::ring`); works in every layout.
     Clockwise,
     CounterClockwise,
 }
