@@ -1,10 +1,11 @@
 //! CLI entry point. See `lib.rs` for the module map and thread layout.
 
+use std::iter::Filter;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::thread;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -15,8 +16,8 @@ use yabai_controls::keys::tap::{GrabSet, Shutdown, Tap};
 use yabai_controls::os_signal;
 use yabai_controls::spaces;
 use yabai_controls::state::State;
-use yabai_controls::yabai::Client;
 use yabai_controls::yabai::signal::SignalEvent;
+use yabai_controls::yabai::Client;
 
 const USAGE: &str = "\
 usage: yabai_controls <command> [options]
@@ -42,12 +43,16 @@ enum Command {
     CheckConfig { config: PathBuf },
 }
 
-fn parse_args(args: &[String]) -> Result<Command> {
-    let mut it = args.iter().skip(1);
-    let cmd = it.next().map(String::as_str).unwrap_or("");
-    let rest: Vec<&String> = it.collect();
+fn parse_args(args: Vec<String>) -> Result<Command> {
+    let mut it = args.into_iter().skip(1);
+    let cmd = it.next().unwrap_or_default();
+    println!("{:p}", &cmd);
+    println!("{:p}", cmd.as_ptr());
+    let rest: Vec<String> = it.collect();
+    println!("{:p}", &(rest.first().unwrap()));
+    println!("{:p}", rest.first().unwrap().as_ptr());
 
-    let config_flag = |rest: &[&String]| -> Result<PathBuf> {
+    let config_flag = |rest: &[String]| -> Result<PathBuf> {
         let mut config = Config::default_path();
         let mut i = 0;
         while i < rest.len() {
@@ -63,7 +68,7 @@ fn parse_args(args: &[String]) -> Result<Command> {
         Ok(config)
     };
 
-    Ok(match cmd {
+    Ok(match cmd.as_str() {
         "daemon" => Command::Daemon {
             config: config_flag(&rest)?,
             signals: !rest.iter().any(|a| *a == "--no-signals"),
@@ -94,7 +99,7 @@ fn main() {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    if let Err(err) = parse_args(&args).and_then(run) {
+    if let Err(err) = parse_args(args).and_then(run) {
         eprintln!("error: {err:#}");
         std::process::exit(1);
     }
