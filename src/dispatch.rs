@@ -85,8 +85,8 @@ impl Dispatcher {
                             | SignalEvent::DisplayRemoved
                             | SignalEvent::SystemWoke
                     ) && self
-                            .last_display_sync
-                            .is_none_or(|t| t.elapsed() > Duration::from_secs(2))
+                        .last_display_sync
+                        .is_none_or(|t| t.elapsed() > Duration::from_secs(2))
                     {
                         self.last_display_sync = Some(Instant::now());
                         if let Err(err) = spaces::sync(&self.client, &self.config.spaces) {
@@ -123,6 +123,7 @@ impl Dispatcher {
         match action {
             Action::Mode(target) => self.enter_mode(&target),
             Action::Focus(step) => self.focus_step(step),
+            Action::App { name, launch } => self.focus_app(&name, launch),
             other => {
                 debug!(%hotkey, ?other, "dispatching");
                 self.executor.submit(other);
@@ -159,6 +160,30 @@ impl Dispatcher {
                 self.executor.submit(Action::Yabai(args));
             }
             None => debug!(?step, "nothing to focus in that direction"),
+        }
+    }
+
+    /// Focuses a window of `app` wherever it is (yabai switches space and
+    /// display as needed); see `State::pick_app_window` for which one.
+    /// Reads the snapshot rather than querying: it is kept current by the
+    /// window signals and holds the recency a query cannot give.
+    fn focus_app(&mut self, app: &str, launch: bool) {
+        self.state.prune_focus();
+        match self.state.pick_app_window(app) {
+            Some(id) => {
+                debug!(app, id, "focus app");
+                self.executor.submit(Action::Yabai(vec![
+                    "window".into(),
+                    "--focus".into(),
+                    id.to_string(),
+                ]));
+            }
+            None if launch => {
+                debug!(app, "no window; launching");
+                self.executor
+                    .submit(Action::Shell(format!("open -a {}", shell_quote(app))));
+            }
+            None => debug!(app, "no window to focus"),
         }
     }
 
@@ -218,6 +243,12 @@ impl Dispatcher {
             warn!(%err, "state refresh after reload failed");
         }
     }
+}
+
+/// Single-quotes `s` for `sh -c`, so `open -a 'Google Chrome'` survives
+/// spaces and `'` in app names.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// Convenience for the `state` subcommand: fetch once and print a summary.

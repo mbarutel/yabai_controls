@@ -16,8 +16,8 @@ use yabai_controls::keys::tap::{GrabSet, Shutdown, Tap};
 use yabai_controls::os_signal;
 use yabai_controls::spaces;
 use yabai_controls::state::State;
-use yabai_controls::yabai::signal::SignalEvent;
 use yabai_controls::yabai::Client;
+use yabai_controls::yabai::signal::SignalEvent;
 
 /// Hotkey daemon for yabai.
 #[derive(Parser)]

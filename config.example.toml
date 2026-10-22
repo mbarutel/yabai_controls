@@ -13,6 +13,9 @@
 #                                          #   previous-window | previous-space
 #   "chord" = { focus = "clockwise" }      # cycle windows on the focused space
 #                                          #   clockwise | counter-clockwise
+#   "chord" = { app = "Google Chrome" }    # focus the app wherever its window is;
+#                                          #   press again to cycle its windows
+#   "chord" = { app = "Ghostty", launch = true }  # ... or `open -a` it if it has none
 
 [settings]
 # shell = "/bin/zsh"                       # used for `shell` actions; defaults to $SHELL
@@ -51,8 +54,10 @@
 "alt - n" = { focus = "clockwise" }
 "alt - p" = { focus = "counter-clockwise" }
 
-# apps
-"alt - return" = { shell = "open -n -a Ghostty" }
+# apps: jump to an app wherever it is (repeat to cycle its windows)
+"alt - c" = { app = "Google Chrome" }
+"alt - return" = { app = "Ghostty", launch = true }
+"alt + shift - return" = { shell = "open -n -a Ghostty" }   # always a new window
 
 # enter resize mode
 "alt - r" = { mode = "resize" }

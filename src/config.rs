@@ -87,8 +87,9 @@ enum RawAction {
         mode: Option<String>,
         focus: Option<String>,
         app: Option<String>,
+        /// Only meaningful with `app`: `open -a` it when it has no window.
         #[serde(default)]
-        launch: bool
+        launch: bool,
     },
 }
 
@@ -101,23 +102,38 @@ impl RawAction {
                 shell,
                 mode,
                 focus,
-            } => match (yabai, shell, mode, focus) {
-                (Some(y), None, None, None) => Action::yabai_from_str(&y),
-                (None, Some(s), None, None) => Ok(Action::Shell(s)),
-                (None, None, Some(m), None) => Ok(Action::Mode(m)),
-                (None, None, None, Some(f)) => {
-                    FocusStep::from_name(&f).map(Action::Focus).ok_or_else(|| {
-                        anyhow!(
-                            "unknown focus step '{f}'; expected one of {}",
-                            FocusStep::NAMES.join(", ")
-                        )
-                    })
+                app,
+                launch,
+            } => {
+                if launch && app.is_none() {
+                    bail!("`launch` only applies together with `app`");
                 }
-                (None, None, None, None) => {
-                    bail!("action needs one of `yabai`, `shell`, `mode` or `focus`")
+                match (yabai, shell, mode, focus, app) {
+                    (Some(y), None, None, None, None) => Action::yabai_from_str(&y),
+                    (None, Some(s), None, None, None) => Ok(Action::Shell(s)),
+                    (None, None, Some(m), None, None) => Ok(Action::Mode(m)),
+                    (None, None, None, Some(f), None) => {
+                        FocusStep::from_name(&f).map(Action::Focus).ok_or_else(|| {
+                            anyhow!(
+                                "unknown focus step '{f}'; expected one of {}",
+                                FocusStep::NAMES.join(", ")
+                            )
+                        })
+                    }
+                    (None, None, None, None, Some(name)) => {
+                        if name.trim().is_empty() {
+                            bail!("`app` must not be empty");
+                        }
+                        Ok(Action::App { name, launch })
+                    }
+                    (None, None, None, None, None) => {
+                        bail!("action needs one of `yabai`, `shell`, `mode`, `focus` or `app`")
+                    }
+                    _ => bail!(
+                        "action must set exactly one of `yabai`, `shell`, `mode`, `focus` or `app`"
+                    ),
                 }
-                _ => bail!("action must set exactly one of `yabai`, `shell`, `mode` or `focus`"),
-            },
+            }
         }
     }
 }
@@ -272,6 +288,8 @@ mod tests {
             "alt + shift - return" = { shell = "open -a Ghostty" }
             "alt - r" = { mode = "resize" }
             "alt - tab" = { focus = "previous-window" }
+            "alt - c" = { app = "Google Chrome" }
+            "alt - return" = { app = "Ghostty", launch = true }
 
             [modes.resize]
             "h" = { yabai = "window --resize left:-20:0" }
@@ -294,6 +312,20 @@ mod tests {
             default[&"alt - tab".parse().unwrap()],
             Action::Focus(FocusStep::PreviousWindow)
         );
+        assert_eq!(
+            default[&"alt - c".parse().unwrap()],
+            Action::App {
+                name: "Google Chrome".into(),
+                launch: false
+            }
+        );
+        assert_eq!(
+            default[&"alt - return".parse().unwrap()],
+            Action::App {
+                name: "Ghostty".into(),
+                launch: true
+            }
+        );
         let resize = cfg.bindings("resize").unwrap();
         assert_eq!(
             resize[&"escape".parse().unwrap()],
@@ -310,6 +342,19 @@ mod tests {
         .unwrap_err();
         assert!(
             format!("{err:#}").contains("unknown focus step 'sideways'"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_launch_without_app() {
+        let err = Config::parse(
+            r#"[bindings]
+"alt - a" = { shell = "open -a Ghostty", launch = true }"#,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("`launch` only applies together with `app`"),
             "{err:#}"
         );
     }

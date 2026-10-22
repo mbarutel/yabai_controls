@@ -117,6 +117,20 @@ is walked in place by stack index before moving on, floating windows are
 included, minimized/hidden windows and dialogs are skipped, and a window
 sitting on the centroid (e.g. the middle of a 3×3 grid) comes last.
 
+## Jump to an app
+
+`"alt - c" = { app = "Google Chrome" }` focuses a Chrome window wherever it
+is; yabai switches space and display as needed. The name must match yabai's
+`app` field exactly (`yabai -m query --windows | jq -r .[].app`). Which
+window: the one you focused most recently, unless a Chrome window is already
+focused, in which case the next Chrome window by id (wrapping), so repeated
+presses walk all its windows across spaces. Minimized/hidden windows and
+dialogs are skipped. With `launch = true` the binding runs `open -a <app>`
+when the app has no window, which also brings forward a running app with
+none. The choice comes from the daemon's snapshot, which yabai's window
+signals keep current; recency is fed by `window_focused`, so it needs signals
+(not `--no-signals`).
+
 ## Layout
 
 ```

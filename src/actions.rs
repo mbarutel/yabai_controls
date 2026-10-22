@@ -1,8 +1,8 @@
 use std::process::Command;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tracing::{debug, error, info};
 
 use crate::yabai::Client;
@@ -13,7 +13,13 @@ pub enum Action {
     Shell(String),
     Mode(String),
     Focus(FocusStep),
-    App { name: String, launch: bool },
+    /// Focus a window of this app wherever it is, cycling its windows on
+    /// repeat; with `launch`, `open -a` it when it has none. Resolved by
+    /// `dispatch` against `State`; never reaches the worker.
+    App {
+        name: String,
+        launch: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +126,9 @@ fn run(action: &Action, client: &Client, shell: &str) -> Result<()> {
         }
         Action::Focus(step) => {
             bail!("focus step {step:?} reached the action worker; dispatch should resolve it")
+        }
+        Action::App { name, .. } => {
+            bail!("app focus '{name}' reached the action worker; dispatch should resolve it")
         }
     }
     Ok(())
