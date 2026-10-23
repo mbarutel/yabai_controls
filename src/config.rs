@@ -27,7 +27,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use toml::{Table, Value};
 
-use crate::actions::{Action, FocusStep};
+use crate::actions::{Action, Command, FocusStep};
 use crate::keys::Hotkey;
 
 pub const DEFAULT_MODE: &str = "default";
@@ -101,7 +101,7 @@ const ACTION_KINDS: [&str; 5] = ["yabai", "shell", "mode", "focus", "app"];
 impl RawAction {
     fn compile(self) -> Result<Action> {
         let mut table = match self {
-            RawAction::Yabai(s) => return Action::yabai_from_str(&s),
+            RawAction::Yabai(s) => return Command::yabai_from_str(&s).map(Action::Command),
             RawAction::Table(t) => t,
         };
 
@@ -136,8 +136,8 @@ impl RawAction {
         }
 
         match kind.as_str() {
-            "yabai" => Action::yabai_from_str(&value),
-            "shell" => Ok(Action::Shell(value)),
+            "yabai" => Command::yabai_from_str(&value).map(Action::Command),
+            "shell" => Ok(Action::Command(Command::Shell(value))),
             "mode" => Ok(Action::Mode(value)),
             "focus" => FocusStep::from_name(&value)
                 .map(Action::Focus)
@@ -332,11 +332,11 @@ mod tests {
         let default = cfg.bindings(DEFAULT_MODE).unwrap();
         assert_eq!(
             default[&"alt - 1".parse().unwrap()],
-            Action::Yabai(vec!["space".into(), "--focus".into(), "1".into()])
+            Action::Command(Command::yabai(&["space", "--focus", "1"]))
         );
         assert_eq!(
             default[&"alt + shift - return".parse().unwrap()],
-            Action::Shell("open -a Ghostty".into())
+            Action::Command(Command::Shell("open -a Ghostty".into()))
         );
         assert_eq!(
             default[&"alt - tab".parse().unwrap()],

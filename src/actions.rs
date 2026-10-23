@@ -1,4 +1,7 @@
-use std::process::Command;
+//! What bindings do ([`Action`]), what the worker thread runs ([`Command`]),
+//! and the worker itself ([`Executor`]).
+
+use std::process;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
 
@@ -7,19 +10,36 @@ use tracing::{debug, error, info};
 
 use crate::yabai::Client;
 
+/// What a binding does. `Command`s go straight to the worker; the other
+/// variants are resolved by `dispatch` against its mode and `State` and
+/// become zero or more `Command`s.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    Yabai(Vec<String>),
-    Shell(String),
+    Command(Command),
     Mode(String),
     Focus(FocusStep),
     /// Focus a window of this app wherever it is, cycling its windows on
-    /// repeat; with `launch`, `open -a` it when it has none. Resolved by
-    /// `dispatch` against `State`; never reaches the worker.
+    /// repeat; with `launch`, `open -a` it when it has none.
     App {
         name: String,
         launch: bool,
     },
+}
+
+/// Something the worker thread can run on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    /// `yabai -m <args>`.
+    Yabai(Vec<String>),
+    /// `$SHELL -c <cmd>`.
+    Shell(String),
+}
+
+impl Command {
+    /// `Command::yabai(&["space", "--focus", "3"])`.
+    pub fn yabai<S: AsRef<str>>(args: &[S]) -> Command {
+        Command::Yabai(args.iter().map(|a| a.as_ref().to_string()).collect())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,22 +69,22 @@ impl FocusStep {
     }
 }
 
-impl Action {
+impl Command {
     /// Parses a `yabai -m`-style argument string with basic quote handling,
     /// so `window --label 'my window'` becomes three arguments.
-    pub fn yabai_from_str(s: &str) -> Result<Action> {
+    pub fn yabai_from_str(s: &str) -> Result<Command> {
         let args = split_args(s)?;
         if args.is_empty() {
             bail!("empty yabai command");
         }
-        Ok(Action::Yabai(args))
+        Ok(Command::Yabai(args))
     }
 }
 
 /// Handle to the worker thread. Dropping it closes the queue; call `join`
-/// to wait for in-flight actions.
+/// to wait for in-flight commands.
 pub struct Executor {
-    tx: Sender<Action>,
+    tx: Sender<Command>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -81,8 +101,8 @@ impl Executor {
         }
     }
 
-    pub fn submit(&self, action: Action) {
-        if self.tx.send(action).is_err() {
+    pub fn submit(&self, command: Command) {
+        if self.tx.send(command).is_err() {
             error!("action worker has exited");
         }
     }
@@ -95,43 +115,48 @@ impl Executor {
     }
 }
 
-fn worker(rx: Receiver<Action>, client: Client, shell: String) {
+fn worker(rx: Receiver<Command>, client: Client, shell: String) {
     info!("action worker started");
-    for action in rx {
-        if let Err(err) = run(&action, &client, &shell) {
-            error!(?action, %err, "action failed");
+    for command in rx {
+        if let Err(err) = run(&command, &client, &shell) {
+            error!(?command, %err, "command failed");
         }
     }
     info!("action worker stopped");
 }
 
-fn run(action: &Action, client: &Client, shell: &str) -> Result<()> {
-    match action {
-        Action::Yabai(args) => {
+fn run(command: &Command, client: &Client, shell: &str) -> Result<()> {
+    match command {
+        Command::Yabai(args) => {
             debug!(?args, "yabai");
             let reply = client.send(args)?;
             if !reply.is_empty() {
                 debug!(reply = reply.trim_end(), "yabai reply");
             }
         }
-        Action::Shell(cmd) => {
+        Command::Shell(cmd) => {
             debug!(%cmd, "shell");
-            let status = Command::new(shell).arg("-c").arg(cmd).status()?;
+            let status = process::Command::new(shell).arg("-c").arg(cmd).status()?;
             if !status.success() {
                 bail!("shell command exited with {status}");
             }
         }
-        Action::Mode(name) => {
-            bail!("mode switch to '{name}' reached the action worker; dispatch should handle it")
-        }
-        Action::Focus(step) => {
-            bail!("focus step {step:?} reached the action worker; dispatch should resolve it")
-        }
-        Action::App { name, .. } => {
-            bail!("app focus '{name}' reached the action worker; dispatch should resolve it")
-        }
     }
     Ok(())
+}
+
+/// Quotes `s` as one `sh` word. Plain path-like strings pass through
+/// unchanged so logged commands stay readable; anything else is
+/// single-quoted, so `open -a 'Google Chrome'` survives spaces and `'`.
+pub fn shell_quote(s: &str) -> String {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
 
 /// Splits on whitespace, honouring single quotes, double quotes and
@@ -218,5 +243,18 @@ mod tests {
     #[test]
     fn rejects_unterminated_quote() {
         assert!(split_args("window --title 'oops").is_err());
+    }
+
+    #[test]
+    fn shell_quote_passes_plain_words_and_quotes_the_rest() {
+        assert_eq!(
+            shell_quote("/usr/local/bin/yabai_controls"),
+            "/usr/local/bin/yabai_controls"
+        );
+        assert_eq!(shell_quote("Google Chrome"), "'Google Chrome'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote(""), "''");
+        // Round-trips through our own splitter.
+        assert_eq!(split_args(&shell_quote("it's x")).unwrap(), vec!["it's x"]);
     }
 }

@@ -8,12 +8,12 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
 use tracing::{debug, error, info, warn};
 
-use crate::actions::{Action, Executor, FocusStep};
+use crate::actions::{Action, Command, Executor, FocusStep, shell_quote};
 use crate::config::{Config, DEFAULT_MODE};
 use crate::events::Event;
+use crate::keys::Hotkey;
 use crate::keys::tap::GrabSet;
 use crate::ring::{self, Direction};
 use crate::spaces;
@@ -21,6 +21,10 @@ use crate::state::State;
 use crate::yabai::Client;
 use crate::yabai::model::{Space, SpaceId, WindowId};
 use crate::yabai::signal::SignalEvent;
+
+/// Display add/remove and wake signals arrive in bursts; `[spaces]` is
+/// re-synced at most once per burst.
+const DISPLAY_SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
 
 pub struct Dispatcher {
     rx: Receiver<Event>,
@@ -69,35 +73,7 @@ impl Dispatcher {
         while let Ok(event) = self.rx.recv() {
             match event {
                 Event::Hotkey(hotkey) => self.on_hotkey(hotkey),
-                Event::Yabai { event, args } => {
-                    // Before the state refresh so the snapshot sees the new
-                    // label and moved windows.
-                    if event == SignalEvent::SpaceCreated
-                        && let Err(err) =
-                            spaces::adopt_new_spaces(&self.client, &self.config.spaces)
-                    {
-                        warn!(%err, "adopting assignments for new space failed");
-                    }
-
-                    if matches!(
-                        event,
-                        SignalEvent::DisplayAdded
-                            | SignalEvent::DisplayRemoved
-                            | SignalEvent::SystemWoke
-                    ) && self
-                        .last_display_sync
-                        .is_none_or(|t| t.elapsed() > Duration::from_secs(2))
-                    {
-                        self.last_display_sync = Some(Instant::now());
-                        if let Err(err) = spaces::sync(&self.client, &self.config.spaces) {
-                            warn!(?event, %err, "re-syncing space assignments failed");
-                        }
-                    }
-
-                    if let Err(err) = self.state.apply(&self.client, event, &args) {
-                        warn!(?event, %err, "failed to apply yabai event to state");
-                    }
-                }
+                Event::Yabai { event, args } => self.on_yabai(event, &args),
                 Event::Reload => self.reload(),
                 Event::Shutdown => break,
             }
@@ -108,7 +84,37 @@ impl Dispatcher {
         self.executor
     }
 
-    fn on_hotkey(&mut self, hotkey: crate::keys::Hotkey) {
+    /// Keeps `[spaces]` in yabai and the snapshot current. Space work runs
+    /// before the state refresh so the snapshot sees the new label and
+    /// moved windows.
+    fn on_yabai(&mut self, event: SignalEvent, args: &[String]) {
+        if event == SignalEvent::SpaceCreated
+            && let Err(err) = spaces::adopt_new_spaces(&self.client, &self.config.spaces)
+        {
+            warn!(%err, "adopting assignments for new space failed");
+        }
+
+        let display_changed = matches!(
+            event,
+            SignalEvent::DisplayAdded | SignalEvent::DisplayRemoved | SignalEvent::SystemWoke
+        );
+        if display_changed
+            && self
+                .last_display_sync
+                .is_none_or(|t| t.elapsed() > DISPLAY_SYNC_DEBOUNCE)
+        {
+            self.last_display_sync = Some(Instant::now());
+            if let Err(err) = spaces::sync(&self.client, &self.config.spaces) {
+                warn!(?event, %err, "re-syncing space assignments failed");
+            }
+        }
+
+        if let Err(err) = self.state.apply(&self.client, event, args) {
+            warn!(?event, %err, "failed to apply yabai event to state");
+        }
+    }
+
+    fn on_hotkey(&mut self, hotkey: Hotkey) {
         let Some(action) = self
             .config
             .bindings(&self.mode)
@@ -124,9 +130,9 @@ impl Dispatcher {
             Action::Mode(target) => self.enter_mode(&target),
             Action::Focus(step) => self.focus_step(step),
             Action::App { name, launch } => self.focus_app(&name, launch),
-            other => {
-                debug!(%hotkey, ?other, "dispatching");
-                self.executor.submit(other);
+            Action::Command(command) => {
+                debug!(%hotkey, ?command, "dispatching");
+                self.executor.submit(command);
             }
         }
     }
@@ -153,11 +159,10 @@ impl Dispatcher {
                 debug!(?step, id, "focus step");
                 self.focus_window(id);
             }
-            Some(Target::Space(id)) => match self.state.spaces.iter().find(|s| s.id == id) {
+            Some(Target::Space(id)) => match self.state.space_by_id(id) {
                 Some(space) => {
                     debug!(?step, index = space.index, "focus step");
-                    self.executor
-                        .submit(Action::Yabai(space_focus_args(space.index)));
+                    self.executor.submit(space_focus(space.index));
                 }
                 None => debug!(?step, id, "previous space is gone"),
             },
@@ -173,8 +178,8 @@ impl Dispatcher {
     /// focus happens in place.
     fn focus_window(&self, id: WindowId) {
         let space = self.state.space_of_window(id);
-        for args in focus_window_commands(space, id) {
-            self.executor.submit(Action::Yabai(args));
+        for command in focus_window_commands(space, id) {
+            self.executor.submit(command);
         }
     }
 
@@ -192,7 +197,7 @@ impl Dispatcher {
             None if launch => {
                 debug!(app, "no window; launching");
                 self.executor
-                    .submit(Action::Shell(format!("open -a {}", shell_quote(app))));
+                    .submit(Command::Shell(format!("open -a {}", shell_quote(app))));
             }
             None => debug!(app, "no window to focus"),
         }
@@ -262,67 +267,21 @@ enum Target {
     Space(SpaceId),
 }
 
-fn space_focus_args(index: u32) -> Vec<String> {
-    vec!["space".into(), "--focus".into(), index.to_string()]
+fn space_focus(index: u32) -> Command {
+    Command::yabai(&["space", "--focus", &index.to_string()])
 }
 
 /// yabai commands that focus window `id`, given the space the snapshot
 /// says it is on: a `space --focus` first when that space is hidden, then
 /// the `window --focus`. An unknown space (window not in the snapshot) just
 /// focuses the window and lets macOS switch.
-fn focus_window_commands(space: Option<&Space>, id: WindowId) -> Vec<Vec<String>> {
+fn focus_window_commands(space: Option<&Space>, id: WindowId) -> Vec<Command> {
     let mut commands = Vec::with_capacity(2);
     if let Some(space) = space.filter(|s| !s.is_visible) {
-        commands.push(space_focus_args(space.index));
+        commands.push(space_focus(space.index));
     }
-    commands.push(vec!["window".into(), "--focus".into(), id.to_string()]);
+    commands.push(Command::yabai(&["window", "--focus", &id.to_string()]));
     commands
-}
-
-/// Single-quotes `s` for `sh -c`, so `open -a 'Google Chrome'` survives
-/// spaces and `'` in app names.
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
-/// Convenience for the `state` subcommand: fetch once and print a summary.
-pub fn print_state(client: &Client) -> Result<()> {
-    let state = State::fetch(client)?;
-    for display in &state.displays {
-        println!(
-            "display {} ({}x{}){}",
-            display.index,
-            display.frame.w,
-            display.frame.h,
-            if display.has_focus { " *" } else { "" }
-        );
-        for space_index in &display.spaces {
-            let Some(space) = state.space_by_index(*space_index) else {
-                continue;
-            };
-            println!(
-                "  space {} [{:?}]{}{}",
-                space.index,
-                space.layout,
-                if space.has_focus { " *" } else { "" },
-                if space.label.is_empty() {
-                    String::new()
-                } else {
-                    format!(" \"{}\"", space.label)
-                }
-            );
-            for window in state.windows_on_space(space.index) {
-                println!(
-                    "    {:>6} {:<20} {}{}",
-                    window.id,
-                    window.app,
-                    window.title,
-                    if window.has_focus { " *" } else { "" }
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -342,15 +301,15 @@ mod tests {
         assert_eq!(
             focus_window_commands(Some(&space(3, false)), 42),
             vec![
-                vec!["space", "--focus", "3"],
-                vec!["window", "--focus", "42"]
+                Command::yabai(&["space", "--focus", "3"]),
+                Command::yabai(&["window", "--focus", "42"]),
             ]
         );
     }
 
     #[test]
     fn visible_or_unknown_space_focuses_the_window_only() {
-        let only_window = vec![vec!["window", "--focus", "42"]];
+        let only_window = vec![Command::yabai(&["window", "--focus", "42"])];
         assert_eq!(
             focus_window_commands(Some(&space(3, true)), 42),
             only_window

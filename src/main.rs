@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use yabai_controls::config::Config;
-use yabai_controls::dispatch::{self, Dispatcher};
+use yabai_controls::dispatch::Dispatcher;
 use yabai_controls::events::{self, Event};
 use yabai_controls::keys::tap::{GrabSet, Shutdown, Tap};
 use yabai_controls::os_signal;
@@ -86,17 +86,22 @@ fn main() {
 }
 
 fn run(command: Command) -> Result<()> {
+    let send_control =
+        |line: &str| -> Result<()> { events::send_control(&events::control_socket_path()?, line) };
     match command {
         Command::Daemon { config, no_signals } => run_daemon(config.config, !no_signals),
         Command::Notify { event, args } => {
             let mut words = vec![event];
             words.extend(args);
-            let line = format!("notify {}", words.join(" "));
-            events::send_control(&events::control_socket_path()?, &line)
+            send_control(&format!("notify {}", words.join(" ")))
         }
-        Command::Reload => events::send_control(&events::control_socket_path()?, "reload"),
-        Command::Shutdown => events::send_control(&events::control_socket_path()?, "shutdown"),
-        Command::State => dispatch::print_state(&Client::from_env()?),
+        Command::Reload => send_control("reload"),
+        Command::Shutdown => send_control("shutdown"),
+        Command::State => {
+            let state = State::fetch(&Client::from_env()?)?;
+            state.print(&mut std::io::stdout().lock())?;
+            Ok(())
+        }
         Command::CheckConfig { config } => {
             let cfg = Config::load(&config.config)?;
             let total: usize = cfg.modes.values().map(|m| m.len()).sum();

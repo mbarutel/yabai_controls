@@ -9,6 +9,7 @@ use anyhow::Result;
 use tracing::{debug, warn};
 
 use super::Client;
+use crate::actions::shell_quote;
 
 pub const LABEL_PREFIX: &str = "yabai_controls_";
 
@@ -219,16 +220,6 @@ impl Client {
                 warn!(label = %event.label(), %err, "failed to remove yabai signal");
             }
         }
-    }
-}
-
-fn shell_quote(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c))
-    {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
 

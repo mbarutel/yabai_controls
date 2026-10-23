@@ -6,6 +6,7 @@
 //! bindings can jump back to the previously focused one.
 
 use std::collections::HashMap;
+use std::io::{self, Write};
 
 use anyhow::Result;
 use tracing::{debug, warn};
@@ -47,7 +48,7 @@ impl State {
     /// of it would still show the old focus and undo the swap.
     pub fn refresh_all(&mut self, client: &Client) -> Result<()> {
         self.displays = client.displays()?;
-        self.spaces = client.spaces()?;
+        self.refresh_spaces(client)?;
         self.windows = client.windows()?.into_iter().map(|w| (w.id, w)).collect();
         self.prune_focus();
         if self.space_focus.current().is_none()
@@ -120,7 +121,7 @@ impl State {
                     self.last_focused.remove(&id);
                 }
                 // Space window lists changed too; cheap enough to refetch.
-                self.spaces = client.spaces()?;
+                self.refresh_spaces(client)?;
             }
             WindowCreated | WindowFocused | WindowMoved | WindowResized | WindowMinimized
             | WindowDeminimized | WindowTitleChanged => {
@@ -135,7 +136,7 @@ impl State {
                     event,
                     WindowCreated | WindowFocused | WindowMinimized | WindowDeminimized
                 ) {
-                    self.spaces = client.spaces()?;
+                    self.refresh_spaces(client)?;
                 }
             }
             SpaceChanged => {
@@ -152,6 +153,13 @@ impl State {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Re-queries spaces only; cheap, and window signals change their
+    /// window lists and `has_focus`.
+    fn refresh_spaces(&mut self, client: &Client) -> Result<()> {
+        self.spaces = client.spaces()?;
         Ok(())
     }
 
@@ -174,10 +182,6 @@ impl State {
         Ok(())
     }
 
-    pub fn focused_display(&self) -> Option<&Display> {
-        self.displays.iter().find(|d| d.has_focus)
-    }
-
     pub fn focused_space(&self) -> Option<&Space> {
         self.spaces.iter().find(|s| s.has_focus)
     }
@@ -188,6 +192,10 @@ impl State {
 
     pub fn space_by_index(&self, index: u32) -> Option<&Space> {
         self.spaces.iter().find(|s| s.index == index)
+    }
+
+    pub fn space_by_id(&self, id: SpaceId) -> Option<&Space> {
+        self.spaces.iter().find(|s| s.id == id)
     }
 
     /// The space a known window is on.
@@ -206,6 +214,53 @@ impl State {
             .collect();
         windows.sort_by_key(|w| w.id);
         windows
+    }
+
+    /// Human-readable dump for the `state` subcommand: displays, their
+    /// spaces, and each space's windows; `*` marks focus.
+    pub fn print(&self, out: &mut impl Write) -> io::Result<()> {
+        fn star(focused: bool) -> &'static str {
+            if focused { " *" } else { "" }
+        }
+        for display in &self.displays {
+            writeln!(
+                out,
+                "display {} ({}x{}){}",
+                display.index,
+                display.frame.w,
+                display.frame.h,
+                star(display.has_focus)
+            )?;
+            for space in display
+                .spaces
+                .iter()
+                .filter_map(|i| self.space_by_index(*i))
+            {
+                let label = if space.label.is_empty() {
+                    String::new()
+                } else {
+                    format!(" \"{}\"", space.label)
+                };
+                writeln!(
+                    out,
+                    "  space {} [{:?}]{}{label}",
+                    space.index,
+                    space.layout,
+                    star(space.has_focus)
+                )?;
+                for window in self.windows_on_space(space.index) {
+                    writeln!(
+                        out,
+                        "    {:>6} {:<20} {}{}",
+                        window.id,
+                        window.app,
+                        window.title,
+                        star(window.has_focus)
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

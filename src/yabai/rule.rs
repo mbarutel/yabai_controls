@@ -75,8 +75,7 @@ pub fn exact_app_regex<S: AsRef<str>>(apps: &[S]) -> String {
 
 impl Client {
     pub fn rules(&self) -> Result<Vec<Rule>> {
-        let body = self.send(&["rule", "--list"])?;
-        Ok(serde_json::from_str(&body)?)
+        self.query(&["rule", "--list"])
     }
 
     /// Adds or replaces the rule, then applies it to windows that already

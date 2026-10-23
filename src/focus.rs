@@ -16,13 +16,6 @@ pub struct LastFocus<T> {
 }
 
 impl<T: Copy + Eq> LastFocus<T> {
-    pub fn new() -> Self {
-        LastFocus {
-            current: None,
-            previous: None,
-        }
-    }
-
     pub fn current(&self) -> Option<T> {
         self.current
     }
@@ -73,7 +66,7 @@ mod tests {
     use super::*;
 
     fn focus(ids: &[u32]) -> LastFocus<u32> {
-        let mut f = LastFocus::new();
+        let mut f = LastFocus::default();
         for id in ids {
             f.record(*id);
         }
@@ -82,7 +75,7 @@ mod tests {
 
     #[test]
     fn empty_has_nothing_and_back_is_none() {
-        let mut f: LastFocus<u32> = LastFocus::new();
+        let mut f: LastFocus<u32> = LastFocus::default();
         assert_eq!(f.current(), None);
         assert_eq!(f.previous(), None);
         assert_eq!(f.back(), None);

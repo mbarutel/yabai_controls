@@ -15,9 +15,11 @@ use crate::yabai::rule::{AppSpaceRule, exact_app_regex};
 
 pub const RULE_LABEL_PREFIX: &str = "yabai_controls_space_";
 
+/// One yabai mutation. Space creation is not a step: it happens before
+/// planning (see [`create_missing`]) because the plan depends on which
+/// spaces exist afterwards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    CreateSpace,
     Label { index: u32, label: String },
     AddRule(AppSpaceRule),
     RemoveRule(String),
@@ -56,14 +58,20 @@ pub fn missing_spaces(existing_count: usize, assignments: &[SpaceAssignment]) ->
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Plan {
     pub steps: Vec<Step>,
-    /// Indices in `new` with no matching space in yabai. Their label and rule
-    /// are skipped; nothing else about them is applied.
-    pub skipped: Vec<u32>,
+    /// Assignments in `new` with no matching space in yabai. Their label
+    /// and rule are skipped; nothing else about them is applied.
+    pub skipped: Vec<SpaceAssignment>,
+}
+
+impl Plan {
+    fn skipped_indices(&self) -> Vec<u32> {
+        self.skipped.iter().map(|a| a.index).collect()
+    }
 }
 
 /// Computes the steps that bring yabai in line with `new`, given the spaces
-/// and the rule labels yabai currently reports. Never emits `CreateSpace`;
-/// see [`missing_spaces`].
+/// and the rule labels yabai currently reports. Does not create spaces; see
+/// [`create_missing`].
 ///
 /// Order: remove stale rules, label, add rules. A rule is stale when it has
 /// our label prefix (`existing_rules` is filtered here) and no present
@@ -79,7 +87,7 @@ pub fn plan(existing: &[Space], existing_rules: &[String], new: &[SpaceAssignmen
 
     let (present, missing): (Vec<&SpaceAssignment>, Vec<&SpaceAssignment>) =
         new.iter().partition(|a| space_exists(a.index));
-    plan.skipped = missing.iter().map(|a| a.index).collect();
+    plan.skipped = missing.into_iter().cloned().collect();
 
     let wanted: Vec<String> = present
         .iter()
@@ -152,9 +160,6 @@ pub fn apply(client: &Client, steps: &[Step]) -> usize {
     for step in steps {
         debug!(?step, "applying space step");
         let result = match step {
-            Step::CreateSpace => client
-                .create_space()
-                .context("creating space (is the scripting addition loaded?)"),
             Step::Label { index, label } => client
                 .label_space(*index, label)
                 .with_context(|| format!("labelling space {index} '{label}'")),
@@ -182,41 +187,18 @@ pub fn apply(client: &Client, steps: &[Step]) -> usize {
 /// rest still applies, so the daemon always starts.
 pub fn sync(client: &Client, new: &[SpaceAssignment]) -> Result<()> {
     let mut existing = client.spaces().context("querying spaces")?;
-
-    let missing = missing_spaces(existing.len(), new);
-    if missing > 0 {
-        let mut created = 0;
-        for _ in 0..missing {
-            match client.create_space() {
-                Ok(()) => created += 1,
-                Err(err) => {
-                    warn!(
-                        %err,
-                        wanted = missing,
-                        created,
-                        "could not create spaces; assignments for missing spaces will be skipped \
-                         (load the scripting addition with `sudo yabai --load-sa`)"
-                    );
-                    break;
-                }
-            }
-        }
-        if created > 0 {
-            info!(created, "spaces created");
-            existing = client.spaces().context("re-querying spaces")?;
-        }
+    if create_missing(client, missing_spaces(existing.len(), new)) > 0 {
+        existing = client.spaces().context("re-querying spaces")?;
     }
 
     let plan = plan(&existing, &rule_labels(client)?, new);
-    for index in &plan.skipped {
-        if let Some(a) = new.iter().find(|a| a.index == *index) {
-            warn!(
-                index,
-                label = %a.label,
-                apps = a.apps.join(", "),
-                "space does not exist; skipping its label and rule"
-            );
-        }
+    for a in &plan.skipped {
+        warn!(
+            index = a.index,
+            label = %a.label,
+            apps = a.apps.join(", "),
+            "space does not exist; skipping its label and rule"
+        );
     }
 
     if plan.steps.is_empty() {
@@ -231,6 +213,30 @@ pub fn sync(client: &Client, new: &[SpaceAssignment]) -> Result<()> {
         "space assignments applied"
     );
     Ok(())
+}
+
+/// Creates `wanted` spaces on the focused display and returns how many were
+/// made. Stops at the first failure: that means the scripting addition is
+/// not loaded, so the rest would fail too.
+fn create_missing(client: &Client, wanted: u32) -> u32 {
+    let mut created = 0;
+    while created < wanted {
+        if let Err(err) = client.create_space() {
+            warn!(
+                %err,
+                wanted,
+                created,
+                "could not create spaces; assignments for missing spaces will be skipped \
+                 (load the scripting addition with `sudo yabai --load-sa`)"
+            );
+            break;
+        }
+        created += 1;
+    }
+    if created > 0 {
+        info!(created, "spaces created");
+    }
+    created
 }
 
 /// Assignments that still need installing: every label-only one (the plan
@@ -257,14 +263,14 @@ pub fn adopt_new_spaces(client: &Client, assignments: &[SpaceAssignment]) -> Res
     let pending = pending(&rule_labels(client)?, assignments);
     let plan = plan(&existing, &[], &pending);
     if plan.steps.is_empty() {
-        debug!(still_missing = ?plan.skipped, "space created; nothing to adopt");
+        debug!(still_missing = ?plan.skipped_indices(), "space created; nothing to adopt");
         return Ok(());
     }
     let failures = apply(client, &plan.steps);
     info!(
         steps = plan.steps.len(),
         failures,
-        still_missing = ?plan.skipped,
+        still_missing = ?plan.skipped_indices(),
         "space created; assignments adopted"
     );
     Ok(())
@@ -346,7 +352,7 @@ mod tests {
 
         let plan = plan(&existing, &[], &new);
 
-        assert_eq!(plan.skipped, vec![5]);
+        assert_eq!(plan.skipped_indices(), vec![5]);
         let touches_space_5 = plan.steps.iter().any(|s| match s {
             Step::Label { index, .. } => *index == 5,
             Step::AddRule(rule) => rule.space == "5",
@@ -378,7 +384,7 @@ mod tests {
 
         let plan = plan(&existing, &rules, &new);
 
-        assert_eq!(plan.skipped, vec![3]);
+        assert_eq!(plan.skipped_indices(), vec![3]);
         assert_eq!(
             plan.steps[0],
             Step::RemoveRule("yabai_controls_space_3".into())
@@ -508,7 +514,7 @@ mod tests {
 
         let plan = plan(&existing, &[], &pending);
 
-        assert_eq!(plan.skipped, vec![7]);
+        assert_eq!(plan.skipped_indices(), vec![7]);
         assert_eq!(
             plan.steps,
             vec![

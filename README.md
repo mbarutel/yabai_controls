@@ -158,10 +158,10 @@ src/
   spaces.rs       plan/apply [spaces]: create, label, app rules
   keys/           Hotkey, chord parser, kVK keycode table, CGEventTap
   yabai/          socket client, serde models, typed queries, signal registration
-  state.rs        in-memory displays/spaces/windows snapshot
+  state.rs        in-memory displays/spaces/windows snapshot + `state` dump
   events.rs       Event enum + the daemon's own control socket
   os_signal.rs    SIGINT/SIGTERM → graceful shutdown (second one force-exits)
-  actions.rs      Action enum + worker thread
+  actions.rs      Action (binding) / Command (worker) enums + worker thread
   focus.rs        current/previous focus memory (previous window and space)
   ring.rs         clockwise ordering of a space's windows (any layout)
   dispatch.rs     the event loop

@@ -3,7 +3,7 @@
 //! Threads at runtime:
 //!
 //! ```text
-//! main: CGEventTap + CFRunLoop ──Event::Hotkey──▶ dispatch loop ──Action──▶ action worker ──▶ yabai / sh
+//! main: CGEventTap + CFRunLoop ──Event::Hotkey──▶ dispatch loop ──Command──▶ action worker ──▶ yabai / sh
 //! control-socket thread ─────────Event::{Yabai,Reload,Shutdown}──▲
 //!   ◀── `yabai_controls notify …` spawned by yabai signals          │
 //! os-signal thread (SIGINT/SIGTERM) ──Event::Shutdown──────────────┘
@@ -14,12 +14,12 @@
 //! - [`keys`]: hotkey type, chord parsing, keycode table, CGEventTap
 //! - [`config`]: TOML config → validated bindings per mode
 //! - [`spaces`]: applies `[spaces]` assignments (create, label, app rules)
-//! - [`state`]: in-memory displays/spaces/windows snapshot + last focus
+//! - [`state`]: in-memory displays/spaces/windows snapshot + last focus; `state` dump
 //! - [`focus`]: current/previous focus memory used by `state`
 //! - [`ring`]: clockwise window order for a space, any layout
 //! - [`events`]: the `Event` enum and the daemon's control socket
 //! - [`os_signal`]: SIGINT/SIGTERM → `Event::Shutdown`
-//! - [`actions`]: `Action` enum and the worker thread that runs them
+//! - [`actions`]: `Action` (what a binding does), `Command` (what the worker runs), the worker
 //! - [`dispatch`]: the event loop that ties the above together
 
 pub mod actions;
