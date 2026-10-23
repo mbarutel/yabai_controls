@@ -1,5 +1,5 @@
 //! Applies `[spaces]` assignments to yabai: creates missing spaces, labels
-//! them, and installs one app→space rule per assignment.
+//! them, and installs one apps→space rule per assignment.
 //!
 //! The work is split into a pure [`plan`] (config + current yabai spaces →
 //! list of [`Step`]s) and an [`apply`] that executes steps, so the decision
@@ -31,12 +31,14 @@ fn is_our_rule(label: &str) -> bool {
     label.starts_with(RULE_LABEL_PREFIX)
 }
 
-/// The rule a assignment needs, if it has an app.
+/// The rule an assignment needs, if it has apps.
 fn rule_for(assignment: &SpaceAssignment) -> Option<AppSpaceRule> {
-    let app = assignment.app.as_deref()?;
+    if assignment.apps.is_empty() {
+        return None;
+    }
     Some(AppSpaceRule {
         label: rule_label(assignment.index),
-        app_regex: exact_app_regex(app),
+        app_regex: exact_app_regex(&assignment.apps),
         // Target by index, not label: the label may not be applied yet when
         // yabai evaluates the rule, and an index is unambiguous.
         space: assignment.index.to_string(),
@@ -81,7 +83,7 @@ pub fn plan(existing: &[Space], existing_rules: &[String], new: &[SpaceAssignmen
 
     let wanted: Vec<String> = present
         .iter()
-        .filter(|a| a.app.is_some())
+        .filter(|a| !a.apps.is_empty())
         .map(|a| rule_label(a.index))
         .collect();
     for label in existing_rules.iter().filter(|l| is_our_rule(l)) {
@@ -211,7 +213,7 @@ pub fn sync(client: &Client, new: &[SpaceAssignment]) -> Result<()> {
             warn!(
                 index,
                 label = %a.label,
-                app = a.app.as_deref().unwrap_or("-"),
+                apps = a.apps.join(", "),
                 "space does not exist; skipping its label and rule"
             );
         }
@@ -241,7 +243,7 @@ pub fn pending(
 ) -> Vec<SpaceAssignment> {
     assignments
         .iter()
-        .filter(|a| a.app.is_none() || !installed_rules.contains(&rule_label(a.index)))
+        .filter(|a| a.apps.is_empty() || !installed_rules.contains(&rule_label(a.index)))
         .cloned()
         .collect()
 }
@@ -276,7 +278,7 @@ mod tests {
         SpaceAssignment {
             index,
             label: label.into(),
-            app: app.map(Into::into),
+            apps: app.into_iter().map(Into::into).collect(),
             follow,
         }
     }
@@ -397,6 +399,28 @@ mod tests {
                 .filter(|s| matches!(s, Step::AddRule(_)))
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn several_apps_share_one_rule_matching_any_of_them() {
+        let new = vec![SpaceAssignment {
+            index: 2,
+            label: "comms".into(),
+            apps: vec!["Microsoft Teams".into(), "Microsoft Outlook".into()],
+            follow: false,
+        }];
+
+        let plan = plan(&[space(2, "comms")], &[], &new);
+
+        assert_eq!(
+            plan.steps,
+            vec![Step::AddRule(AppSpaceRule {
+                label: "yabai_controls_space_2".into(),
+                app_regex: "^(Microsoft Teams|Microsoft Outlook)$".into(),
+                space: "2".into(),
+                follow: false,
+            })]
         );
     }
 

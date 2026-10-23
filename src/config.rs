@@ -15,7 +15,8 @@
 //!
 //! [spaces]                    # dedicate spaces to apps; label defaults to app
 //! 1 = { app = "Google Chrome" }
-//! 2 = { app = "Microsoft Teams", label = "teams", follow = true }
+//! 2 = { apps = ["Microsoft Teams", "Microsoft Outlook"], label = "comms" }
+//! 3 = { app = "Ghostty", follow = true }
 //! 4 = { label = "scratch" }
 //! ```
 
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
+use toml::{Table, Value};
 
 use crate::actions::{Action, FocusStep};
 use crate::keys::Hotkey;
@@ -48,13 +50,16 @@ struct RawConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSpace {
+    /// Single app; shorthand for `apps = ["..."]`. Not combined with `apps`.
     app: Option<String>,
+    #[serde(default)]
+    apps: Vec<String>,
     label: Option<String>,
     #[serde(default)]
     follow: bool,
 }
 
-/// A space dedicated to an app and/or given a label.
+/// A space dedicated to some apps and/or given a label.
 ///
 /// This is the config-level fact; everything yabai needs (the rule label,
 /// the anchored app regex, the space selector) is derived from it in
@@ -63,11 +68,13 @@ struct RawSpace {
 pub struct SpaceAssignment {
     /// 1-based mission-control index, as yabai reports it.
     pub index: u32,
-    /// Label applied to the space. Defaults to `app`.
+    /// Label applied to the space. Defaults to the app when there is one.
     pub label: String,
-    /// Exact application name (`Window::app`) whose windows go to this space.
-    pub app: Option<String>,
-    /// When true, a new window of `app` also focuses the space.
+    /// Exact application names (`Window::app`) whose windows go to this
+    /// space. Empty for a label-only assignment. No app appears in two
+    /// assignments.
+    pub apps: Vec<String>,
+    /// When true, a new window of any of `apps` also focuses the space.
     pub follow: bool,
 }
 
@@ -77,63 +84,77 @@ struct RawSettings {
     shell: Option<String>,
 }
 
+/// A binding's value: either a bare yabai argument string or a table with
+/// exactly one of the `ACTION_KINDS` keys (plus `launch` alongside `app`).
+///
+/// The table is kept as a `toml::Table` rather than a struct of `Option`s
+/// so that `compile` can name the offending key in its errors.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawAction {
     Yabai(String),
-    Table {
-        yabai: Option<String>,
-        shell: Option<String>,
-        mode: Option<String>,
-        focus: Option<String>,
-        app: Option<String>,
-        /// Only meaningful with `app`: `open -a` it when it has no window.
-        #[serde(default)]
-        launch: bool,
-    },
+    Table(Table),
 }
+
+const ACTION_KINDS: [&str; 5] = ["yabai", "shell", "mode", "focus", "app"];
 
 impl RawAction {
     fn compile(self) -> Result<Action> {
-        match self {
-            RawAction::Yabai(s) => Action::yabai_from_str(&s),
-            RawAction::Table {
-                yabai,
-                shell,
-                mode,
-                focus,
-                app,
-                launch,
-            } => {
-                if launch && app.is_none() {
-                    bail!("`launch` only applies together with `app`");
+        let mut table = match self {
+            RawAction::Yabai(s) => return Action::yabai_from_str(&s),
+            RawAction::Table(t) => t,
+        };
+
+        // `launch` only means something next to `app`: `open -a` it when
+        // it has no window.
+        let launch = match table.remove("launch") {
+            None => false,
+            Some(Value::Boolean(b)) => b,
+            Some(v) => bail!("`launch` must be a boolean, not {}", v.type_str()),
+        };
+
+        if let Some(unknown) = table.keys().find(|k| !ACTION_KINDS.contains(&k.as_str())) {
+            bail!(
+                "unknown key `{unknown}`; expected one of {}",
+                ACTION_KINDS.join(", ")
+            );
+        }
+        let mut entries = table.into_iter();
+        let (kind, value) = match (entries.next(), entries.next()) {
+            (Some(entry), None) => entry,
+            (None, _) => bail!("action needs one of {}", ACTION_KINDS.join(", ")),
+            (Some((a, _)), Some((b, _))) => bail!(
+                "action must set exactly one of {}; got `{a}` and `{b}`",
+                ACTION_KINDS.join(", ")
+            ),
+        };
+        let Value::String(value) = value else {
+            bail!("`{kind}` must be a string, not {}", value.type_str());
+        };
+        if launch && kind != "app" {
+            bail!("`launch` only applies together with `app`");
+        }
+
+        match kind.as_str() {
+            "yabai" => Action::yabai_from_str(&value),
+            "shell" => Ok(Action::Shell(value)),
+            "mode" => Ok(Action::Mode(value)),
+            "focus" => FocusStep::from_name(&value)
+                .map(Action::Focus)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "unknown focus step '{value}'; expected one of {}",
+                        FocusStep::NAMES.join(", ")
+                    )
+                }),
+            "app" => {
+                let name = value.trim().to_string();
+                if name.is_empty() {
+                    bail!("`app` must not be empty");
                 }
-                match (yabai, shell, mode, focus, app) {
-                    (Some(y), None, None, None, None) => Action::yabai_from_str(&y),
-                    (None, Some(s), None, None, None) => Ok(Action::Shell(s)),
-                    (None, None, Some(m), None, None) => Ok(Action::Mode(m)),
-                    (None, None, None, Some(f), None) => {
-                        FocusStep::from_name(&f).map(Action::Focus).ok_or_else(|| {
-                            anyhow!(
-                                "unknown focus step '{f}'; expected one of {}",
-                                FocusStep::NAMES.join(", ")
-                            )
-                        })
-                    }
-                    (None, None, None, None, Some(name)) => {
-                        if name.trim().is_empty() {
-                            bail!("`app` must not be empty");
-                        }
-                        Ok(Action::App { name, launch })
-                    }
-                    (None, None, None, None, None) => {
-                        bail!("action needs one of `yabai`, `shell`, `mode`, `focus` or `app`")
-                    }
-                    _ => bail!(
-                        "action must set exactly one of `yabai`, `shell`, `mode`, `focus` or `app`"
-                    ),
-                }
+                Ok(Action::App { name, launch })
             }
+            _ => unreachable!("key was checked against ACTION_KINDS"),
         }
     }
 }
@@ -223,22 +244,31 @@ fn compile_spaces(raw: HashMap<String, RawSpace>) -> Result<Vec<SpaceAssignment>
             .filter(|&i| i >= 1)
             .with_context(|| format!("[spaces] key '{key}' must be a space index >= 1"))?;
 
-        let app = space
-            .app
-            .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty());
+        if space.app.is_some() && !space.apps.is_empty() {
+            bail!("[spaces.{index}] use either `app` or `apps`, not both");
+        }
+        let mut space_apps: Vec<String> = Vec::new();
+        for app in space.app.into_iter().chain(space.apps) {
+            let app = app.trim().to_string();
+            if app.is_empty() || space_apps.contains(&app) {
+                continue;
+            }
+            if !apps.insert(app.clone()) {
+                bail!("[spaces.{index}] app '{app}' is already assigned to another space");
+            }
+            space_apps.push(app);
+        }
+
         let label = space
             .label
             .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .or_else(|| app.clone())
-            .with_context(|| format!("[spaces.{index}] needs `app` or `label`"))?;
-
-        if let Some(app) = &app
-            && !apps.insert(app.clone())
-        {
-            bail!("[spaces.{index}] app '{app}' is already assigned to another space");
-        }
+            .filter(|l| !l.is_empty());
+        let label = match (label, space_apps.as_slice()) {
+            (Some(label), _) => label,
+            (None, [app]) => app.clone(),
+            (None, []) => bail!("[spaces.{index}] needs `app`, `apps` or `label`"),
+            (None, _) => bail!("[spaces.{index}] needs a `label` when listing several apps"),
+        };
         if !labels.insert(label.clone()) {
             bail!("[spaces.{index}] label '{label}' is already used by another space");
         }
@@ -246,7 +276,7 @@ fn compile_spaces(raw: HashMap<String, RawSpace>) -> Result<Vec<SpaceAssignment>
         spaces.push(SpaceAssignment {
             index,
             label,
-            app,
+            apps: space_apps,
             follow: space.follow,
         });
     }
@@ -289,7 +319,7 @@ mod tests {
             "alt - r" = { mode = "resize" }
             "alt - tab" = { focus = "previous-window" }
             "alt - c" = { app = "Google Chrome" }
-            "alt - return" = { app = "Ghostty", launch = true }
+            "alt - return" = { app = "  Ghostty ", launch = true }
 
             [modes.resize]
             "h" = { yabai = "window --resize left:-20:0" }
@@ -384,13 +414,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_action_with_two_kinds() {
-        let err = Config::parse(
-            r#"[bindings]
-"alt - a" = { yabai = "x", shell = "y" }"#,
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("exactly one"), "{err:#}");
+    fn rejects_malformed_action_tables() {
+        let cases = [
+            (r#"{ yabai = "x", shell = "y" }"#, "exactly one"),
+            (r#"{ }"#, "needs one of"),
+            (r#"{ shel = "x" }"#, "unknown key `shel`"),
+            (r#"{ mode = 3 }"#, "`mode` must be a string"),
+            (
+                r#"{ app = "X", launch = "yes" }"#,
+                "`launch` must be a boolean",
+            ),
+            (r#"{ app = "   " }"#, "`app` must not be empty"),
+        ];
+        for (value, expected) in cases {
+            let err = Config::parse(&format!("[bindings]\n\"alt - a\" = {value}")).unwrap_err();
+            assert!(format!("{err:#}").contains(expected), "{value}: {err:#}");
+        }
     }
 
     #[test]
@@ -405,7 +444,7 @@ mod tests {
             [spaces]
             3 = { app = "Ghostty", follow = true }
             1 = { app = "Google Chrome" }
-            2 = { app = "Microsoft Teams", label = "teams" }
+            2 = { apps = ["Microsoft Teams", " Microsoft Outlook ", "Microsoft Teams"], label = "comms" }
             4 = { label = "scratch" }
             "#,
         )
@@ -417,25 +456,25 @@ mod tests {
                 SpaceAssignment {
                     index: 1,
                     label: "Google Chrome".into(),
-                    app: Some("Google Chrome".into()),
+                    apps: vec!["Google Chrome".into()],
                     follow: false
                 },
                 SpaceAssignment {
                     index: 2,
-                    label: "teams".into(),
-                    app: Some("Microsoft Teams".into()),
+                    label: "comms".into(),
+                    apps: vec!["Microsoft Teams".into(), "Microsoft Outlook".into()],
                     follow: false
                 },
                 SpaceAssignment {
                     index: 3,
                     label: "Ghostty".into(),
-                    app: Some("Ghostty".into()),
+                    apps: vec!["Ghostty".into()],
                     follow: true
                 },
                 SpaceAssignment {
                     index: 4,
                     label: "scratch".into(),
-                    app: None,
+                    apps: vec![],
                     follow: false
                 },
             ]
@@ -447,9 +486,24 @@ mod tests {
         let cases = [
             ("[spaces]\n0 = { app = \"A\" }", "index >= 1"),
             ("[spaces]\nfoo = { app = \"A\" }", "index >= 1"),
-            ("[spaces]\n1 = { follow = true }", "needs `app` or `label`"),
+            (
+                "[spaces]\n1 = { follow = true }",
+                "needs `app`, `apps` or `label`",
+            ),
+            (
+                "[spaces]\n1 = { apps = [\"A\", \"B\"] }",
+                "needs a `label` when listing several apps",
+            ),
+            (
+                "[spaces]\n1 = { app = \"A\", apps = [\"B\"] }",
+                "either `app` or `apps`",
+            ),
             (
                 "[spaces]\n1 = { app = \"A\" }\n2 = { app = \"A\" }",
+                "already assigned",
+            ),
+            (
+                "[spaces]\n1 = { app = \"A\" }\n2 = { apps = [\"B\", \"A\"], label = \"x\" }",
                 "already assigned",
             ),
             (

@@ -32,6 +32,23 @@ codesign -f -s yabai_controls ~/.cargo/bin/yabai_controls
 ### Install as a launch agent
 
 ```sh
+./install.sh
+```
+
+The script builds a release binary, validates `config.toml` with it (aborts
+before touching anything if the config is bad), `cargo install`s to
+`~/.cargo/bin/yabai_controls`, signs it if a `yabai_controls` code-signing
+identity exists (`SIGN_IDENTITY=…` to use another name), copies
+`launchd/com.asmvik.yabai_controls.plist` to `~/Library/LaunchAgents/`,
+restarts the agent (`launchctl bootout` + `bootstrap`, so plist changes are
+picked up) and reports whether the daemon came up. Re-run it after every
+change. If the daemon fails with `failed to create event tap`, the script
+opens the Accessibility pane: re-add `~/.cargo/bin/yabai_controls` there
+(unless you signed it, see above).
+
+By hand, the same steps are:
+
+```sh
 cargo install --path .                       # ~/.cargo/bin/yabai_controls
 cp launchd/com.asmvik.yabai_controls.plist ~/Library/LaunchAgents/
 # grant Accessibility to ~/.cargo/bin/yabai_controls, then:
@@ -41,12 +58,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asmvik.yabai_control
 Logs go to `/tmp/yabai_controls_$USER.{out,err}.log`. `KeepAlive` restarts the
 daemon after a crash or when it exits because yabai was not up yet;
 `yabai_controls shutdown` keeps it down until the next login or
-`launchctl kickstart gui/$(id -u)/com.asmvik.yabai_controls`. After a rebuild:
-`cargo install --path . && yabai_controls shutdown && launchctl kickstart …`,
-then re-grant Accessibility (or `codesign` first, see above). Until the grant
-is in place launchd keeps retrying the daemon every few seconds and the
-err log fills with `failed to create event tap`; it starts working as soon
-as the grant lands.
+`launchctl kickstart gui/$(id -u)/com.asmvik.yabai_controls`. Until the
+Accessibility grant is in place launchd keeps retrying the daemon every few
+seconds and the err log fills with `failed to create event tap`; it starts
+working as soon as the grant lands.
 
 yabai keeps the rules and signals this daemon installs only in memory, so a
 yabai restart silently drops them. Add this as the last line of `.yabairc`;
@@ -73,14 +88,16 @@ registers; you don't run it by hand.
 ```toml
 [spaces]
 1 = { app = "Google Chrome" }                     # label defaults to the app name
-2 = { app = "Microsoft Teams", label = "teams" }
+2 = { apps = ["Microsoft Teams", "Microsoft Outlook"], label = "comms" }
 3 = { app = "Ghostty", follow = true }            # focus the space on new windows
 4 = { label = "scratch" }                         # label only
 ```
 
-On startup and `reload` the daemon creates any missing spaces, sets each
-label, and adds a yabai rule `app="^<app>$" space=<index>` labelled
-`yabai_controls_space_<index>`, then applies it so already-open windows move.
+A space takes one `app` or several `apps` (then `label` is required); an app
+can only belong to one space. On startup and `reload` the daemon creates any
+missing spaces, sets each label, and adds one yabai rule per space,
+`app="^(<app>|<app>)$" space=<index>` labelled `yabai_controls_space_<index>`,
+then applies it so already-open windows move.
 Creating spaces needs yabai's scripting addition (`sudo yabai --load-sa`);
 without it, assignments for missing spaces are skipped with a warning and the
 daemon still starts. When a space later appears (yabai's `space_created`

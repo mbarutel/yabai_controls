@@ -19,7 +19,7 @@ use crate::ring::{self, Direction};
 use crate::spaces;
 use crate::state::State;
 use crate::yabai::Client;
-use crate::yabai::model::{SpaceId, WindowId};
+use crate::yabai::model::{Space, SpaceId, WindowId};
 use crate::yabai::signal::SignalEvent;
 
 pub struct Dispatcher {
@@ -140,43 +140,54 @@ impl Dispatcher {
         use FocusStep::*;
         // Windows can close without a signal reaching us in time.
         self.state.prune_focus();
-        let window = |id: WindowId| vec!["window".to_string(), "--focus".into(), id.to_string()];
-        let space = |id: SpaceId| {
-            self.state
-                .spaces
-                .iter()
-                .find(|s| s.id == id)
-                .map(|s| vec!["space".to_string(), "--focus".into(), s.index.to_string()])
+        let target = match step {
+            PreviousWindow => self.state.window_focus.back().map(Target::Window),
+            PreviousSpace => self.state.space_focus.back().map(Target::Space),
+            Clockwise => self.around_space(Direction::Clockwise).map(Target::Window),
+            CounterClockwise => self
+                .around_space(Direction::CounterClockwise)
+                .map(Target::Window),
         };
-        let args = match step {
-            PreviousWindow => self.state.window_focus.back().map(window),
-            PreviousSpace => self.state.space_focus.back().and_then(space),
-            Clockwise => self.around_space(Direction::Clockwise).map(window),
-            CounterClockwise => self.around_space(Direction::CounterClockwise).map(window),
-        };
-        match args {
-            Some(args) => {
-                debug!(?step, ?args, "focus step");
-                self.executor.submit(Action::Yabai(args));
+        match target {
+            Some(Target::Window(id)) => {
+                debug!(?step, id, "focus step");
+                self.focus_window(id);
             }
+            Some(Target::Space(id)) => match self.state.spaces.iter().find(|s| s.id == id) {
+                Some(space) => {
+                    debug!(?step, index = space.index, "focus step");
+                    self.executor
+                        .submit(Action::Yabai(space_focus_args(space.index)));
+                }
+                None => debug!(?step, id, "previous space is gone"),
+            },
             None => debug!(?step, "nothing to focus in that direction"),
         }
     }
 
-    /// Focuses a window of `app` wherever it is (yabai switches space and
-    /// display as needed); see `State::pick_app_window` for which one.
-    /// Reads the snapshot rather than querying: it is kept current by the
-    /// window signals and holds the recency a query cannot give.
+    /// Focuses a window, switching to its space first when that space is
+    /// hidden. yabai's `window --focus` only makes the window frontmost and
+    /// lets macOS follow it to its space, which plays the slide animation
+    /// when the space is on the current display; `space --focus` goes through
+    /// the scripting addition and switches instantly, after which the window
+    /// focus happens in place.
+    fn focus_window(&self, id: WindowId) {
+        let space = self.state.space_of_window(id);
+        for args in focus_window_commands(space, id) {
+            self.executor.submit(Action::Yabai(args));
+        }
+    }
+
+    /// Focuses a window of `app` wherever it is; see `State::pick_app_window`
+    /// for which one. Reads the snapshot rather than querying: it is kept
+    /// current by the window signals and holds the recency a query cannot
+    /// give.
     fn focus_app(&mut self, app: &str, launch: bool) {
         self.state.prune_focus();
         match self.state.pick_app_window(app) {
             Some(id) => {
                 debug!(app, id, "focus app");
-                self.executor.submit(Action::Yabai(vec![
-                    "window".into(),
-                    "--focus".into(),
-                    id.to_string(),
-                ]));
+                self.focus_window(id);
             }
             None if launch => {
                 debug!(app, "no window; launching");
@@ -245,6 +256,29 @@ impl Dispatcher {
     }
 }
 
+/// What a focus step resolved to.
+enum Target {
+    Window(WindowId),
+    Space(SpaceId),
+}
+
+fn space_focus_args(index: u32) -> Vec<String> {
+    vec!["space".into(), "--focus".into(), index.to_string()]
+}
+
+/// yabai commands that focus window `id`, given the space the snapshot
+/// says it is on: a `space --focus` first when that space is hidden, then
+/// the `window --focus`. An unknown space (window not in the snapshot) just
+/// focuses the window and lets macOS switch.
+fn focus_window_commands(space: Option<&Space>, id: WindowId) -> Vec<Vec<String>> {
+    let mut commands = Vec::with_capacity(2);
+    if let Some(space) = space.filter(|s| !s.is_visible) {
+        commands.push(space_focus_args(space.index));
+    }
+    commands.push(vec!["window".into(), "--focus".into(), id.to_string()]);
+    commands
+}
+
 /// Single-quotes `s` for `sh -c`, so `open -a 'Google Chrome'` survives
 /// spaces and `'` in app names.
 fn shell_quote(s: &str) -> String {
@@ -289,4 +323,38 @@ pub fn print_state(client: &Client) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn space(index: u32, is_visible: bool) -> Space {
+        Space {
+            index,
+            is_visible,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hidden_space_is_focused_before_the_window() {
+        assert_eq!(
+            focus_window_commands(Some(&space(3, false)), 42),
+            vec![
+                vec!["space", "--focus", "3"],
+                vec!["window", "--focus", "42"]
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_or_unknown_space_focuses_the_window_only() {
+        let only_window = vec![vec!["window", "--focus", "42"]];
+        assert_eq!(
+            focus_window_commands(Some(&space(3, true)), 42),
+            only_window
+        );
+        assert_eq!(focus_window_commands(None, 42), only_window);
+    }
 }

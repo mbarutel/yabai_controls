@@ -49,19 +49,28 @@ impl AppSpaceRule {
     }
 }
 
-/// Anchors an exact app name as a yabai regex: `Ghostty` → `^Ghostty$`, so it
-/// won't also match `Ghostty Helper`. Regex metacharacters are escaped.
-pub fn exact_app_regex(app: &str) -> String {
-    let mut out = String::with_capacity(app.len() + 2);
-    out.push('^');
-    for c in app.chars() {
-        if r"\.^$|?*+()[]{}".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
+/// Anchors exact app names as a yabai regex: `["Ghostty"]` → `^Ghostty$`,
+/// `["A", "B"]` → `^(A|B)$`, so `Ghostty` won't also match `Ghostty Helper`.
+/// Regex metacharacters are escaped.
+pub fn exact_app_regex<S: AsRef<str>>(apps: &[S]) -> String {
+    let escaped: Vec<String> = apps
+        .iter()
+        .map(|app| {
+            let app = app.as_ref();
+            let mut out = String::with_capacity(app.len());
+            for c in app.chars() {
+                if r"\.^$|?*+()[]{}".contains(c) {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+            out
+        })
+        .collect();
+    match escaped.as_slice() {
+        [one] => format!("^{one}$"),
+        many => format!("^({})$", many.join("|")),
     }
-    out.push('$');
-    out
 }
 
 impl Client {
@@ -92,9 +101,13 @@ mod tests {
 
     #[test]
     fn exact_regex_anchors_and_escapes() {
-        assert_eq!(exact_app_regex("Ghostty"), "^Ghostty$");
-        assert_eq!(exact_app_regex("Logi Options+"), r"^Logi Options\+$");
-        assert_eq!(exact_app_regex("a.b (c)"), r"^a\.b \(c\)$");
+        assert_eq!(exact_app_regex(&["Ghostty"]), "^Ghostty$");
+        assert_eq!(exact_app_regex(&["Logi Options+"]), r"^Logi Options\+$");
+        assert_eq!(exact_app_regex(&["a.b (c)"]), r"^a\.b \(c\)$");
+        assert_eq!(
+            exact_app_regex(&["Microsoft Teams", "Logi Options+"]),
+            r"^(Microsoft Teams|Logi Options\+)$"
+        );
     }
 
     #[test]

@@ -72,12 +72,13 @@
 
 # Dedicate spaces to apps. Keyed by space index; missing spaces are created
 # when yabai's scripting addition is loaded, otherwise skipped with a warning.
-# `app` is the exact name yabai reports
-# (see `yabai_controls state`). `label` defaults to `app`. `follow = true`
-# focuses the space when a new window of the app appears. Labels persist in
-# yabai after the daemon exits; rules are removed.
+# `app` (one) or `apps` (several) are the exact names yabai reports
+# (see `yabai_controls state`); an app can only belong to one space. `label`
+# defaults to `app` and is required with `apps`. `follow = true` focuses the
+# space when a new window of the app appears. Labels persist in yabai after
+# the daemon exits; rules are removed.
 [spaces]
 1 = { app = "Google Chrome" }                        # label defaults to the app name
-2 = { app = "Microsoft Teams", label = "teams" }     # override the label
+2 = { apps = ["Microsoft Teams", "Microsoft Outlook"], label = "comms" }
 3 = { app = "Ghostty", follow = true }               # focus the space when a window appears
 4 = { label = "scratch" }                            # label only, no dedicated app

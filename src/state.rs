@@ -190,6 +190,13 @@ impl State {
         self.spaces.iter().find(|s| s.index == index)
     }
 
+    /// The space a known window is on.
+    pub fn space_of_window(&self, id: WindowId) -> Option<&Space> {
+        self.windows
+            .get(&id)
+            .and_then(|w| self.space_by_index(w.space))
+    }
+
     /// Standard windows on a space, in stable id order.
     pub fn windows_on_space(&self, space_index: u32) -> Vec<&Window> {
         let mut windows: Vec<&Window> = self
