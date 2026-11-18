@@ -51,11 +51,13 @@
 "alt - escape" = { focus = "previous-space" }
 
 # cycle through the windows on the focused space, works in any layout
-"alt - n" = { focus = "clockwise" }
-"alt - p" = { focus = "counter-clockwise" }
+"alt - e" = { focus = "clockwise" }
+"alt - i" = { focus = "counter-clockwise" }
 
 # apps: jump to an app wherever it is (repeat to cycle its windows)
 "alt - c" = { app = "Google Chrome" }
+"alt - p" = { app = "Postman" }
+"alt - z" = { app = "Zed" }
 "alt - return" = { app = "Ghostty", launch = true }
 "alt + shift - return" = { shell = "open -n -a Ghostty" }   # always a new window
 
@@ -79,6 +81,6 @@
 # the daemon exits; rules are removed.
 [spaces]
 1 = { app = "Google Chrome" }                        # label defaults to the app name
-2 = { apps = ["Microsoft Teams", "Microsoft Outlook"], label = "comms" }
+2 = { apps = ["Microsoft Teams", "Microsoft Outlook"], label = "teams" }
 3 = { app = "Ghostty", follow = true }               # focus the space when a window appears
 4 = { label = "scratch" }                            # label only, no dedicated app

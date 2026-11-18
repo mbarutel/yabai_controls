@@ -1,0 +1,122 @@
+// Zed debug configurations (debugger: start, F4). Rust-analyzer also offers
+// gutter-run debug tasks for individual tests; these cover the daemon and
+// the subcommands that take arguments.
+//
+// Accessibility: the `daemon` entry only works if target/debug/yabai_controls
+// is granted Accessibility (see README). Every rebuild re-signs the binary,
+// so re-add it after rebuilding, or `codesign -f -s yabai_controls` it first.
+[
+  {
+    "label": "daemon (example config)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "sh",
+      "args": ["-c", "scripts/kill-stale-daemon.sh && cargo build"],
+      "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/yabai_controls",
+    "args": ["daemon", "--config", "$ZED_WORKTREE_ROOT/config.example.toml"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_LOG": "debug",
+      "RUST_BACKTRACE": "1"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    "label": "daemon (~/.config/yabai_controls/config.toml)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "sh",
+      "args": ["-c", "scripts/kill-stale-daemon.sh && cargo build"],
+      "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/yabai_controls",
+    "args": ["daemon"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_LOG": "debug",
+      "RUST_BACKTRACE": "1"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    "label": "check-config (example config)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/yabai_controls",
+    "args": ["check-config", "--config", "$ZED_WORKTREE_ROOT/config.example.toml"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_LOG": "debug"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    "label": "state",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/yabai_controls",
+    "args": ["state"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_LOG": "debug"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    "label": "notify space_changed (needs running daemon)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/yabai_controls",
+    "args": ["notify", "space_changed", "2", "1"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_LOG": "debug"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    // Zed infers the test binary from `cargo test`; stops in the first failing test.
+    "label": "lib + bin unit tests",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["test", "--no-run"]
+    },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_BACKTRACE": "1"
+    },
+    "sourceLanguages": ["rust"]
+  },
+  {
+    "label": "integration test: protocol",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["test", "--no-run", "--test", "protocol"]
+    },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUST_BACKTRACE": "1"
+    },
+    "sourceLanguages": ["rust"]
+  }
+]
